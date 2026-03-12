@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Colors
@@ -11,19 +11,19 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-log()  { echo -e "${CYAN}[tidecloak]${NC} $1"; }
-ok()   { echo -e "${GREEN}[tidecloak]${NC} $1"; }
-warn() { echo -e "${YELLOW}[tidecloak]${NC} $1"; }
-err()  { echo -e "${RED}[tidecloak]${NC} $1"; }
+log()  { printf "${CYAN}[tidecloak]${NC} %s\n" "$1"; }
+ok()   { printf "${GREEN}[tidecloak]${NC} %s\n" "$1"; }
+warn() { printf "${YELLOW}[tidecloak]${NC} %s\n" "$1"; }
+err()  { printf "${RED}[tidecloak]${NC} %s\n" "$1"; }
 
 # ─── Prerequisite checks ───
 
 MISSING=0
 
 check_cmd() {
-  if ! command -v "$1" &>/dev/null; then
+  if ! command -v "$1" >/dev/null 2>&1; then
     err "Missing required command: $1"
-    [[ -n "${2:-}" ]] && echo -e "       Install: ${CYAN}$2${NC}"
+    if [ -n "${2:-}" ]; then printf "       Install: ${CYAN}%s${NC}\n" "$2"; fi
     MISSING=1
   fi
 }
@@ -32,15 +32,15 @@ check_cmd docker "https://docs.docker.com/get-docker/"
 check_cmd curl   "sudo apt install curl"
 check_cmd jq     "sudo apt install jq"
 
-if [[ "$MISSING" -ne 0 ]]; then
+if [ "$MISSING" -ne 0 ]; then
   err "Fix the above issues and re-run."
   exit 1
 fi
 
 # Check Docker daemon is running
-if ! sudo docker info &>/dev/null; then
+if ! sudo docker info >/dev/null 2>&1; then
   err "Docker is installed but the service isn't running."
-  echo -e "       Start it with: ${CYAN}sudo systemctl start docker${NC}"
+  printf "       Start it with: ${CYAN}sudo systemctl start docker${NC}\n"
   exit 1
 fi
 
@@ -77,4 +77,4 @@ ok "TideCloak is ready."
 
 mkdir -p "${PROJECT_ROOT}/data"
 cd "$SCRIPT_DIR"
-bash ./tcinit.sh
+sh ./tcinit.sh

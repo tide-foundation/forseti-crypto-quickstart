@@ -1,19 +1,19 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Determine paths
 # ─────────────────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Load overrides from .env.example in the project root
 if [ -f "${PROJECT_ROOT}/.env.example" ]; then
   # shellcheck disable=SC1090
-  source "${PROJECT_ROOT}/.env.example"
+  . "${PROJECT_ROOT}/.env.example"
 elif [ -f "${SCRIPT_DIR}/.env.example" ]; then
   # shellcheck disable=SC1090
-  source "${SCRIPT_DIR}/.env.example"
+  . "${SCRIPT_DIR}/.env.example"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -25,10 +25,10 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-log()  { echo -e "${CYAN}[tidecloak]${NC} $1"; }
-ok()   { echo -e "${GREEN}[tidecloak]${NC} $1"; }
-warn() { echo -e "${YELLOW}[tidecloak]${NC} $1"; }
-err()  { echo -e "${RED}[tidecloak]${NC} $1"; }
+log()  { printf "${CYAN}[tidecloak]${NC} %s\n" "$1"; }
+ok()   { printf "${GREEN}[tidecloak]${NC} %s\n" "$1"; }
+warn() { printf "${YELLOW}[tidecloak]${NC} %s\n" "$1"; }
+err()  { printf "${RED}[tidecloak]${NC} %s\n" "$1"; }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Defaults (override via env)
@@ -47,29 +47,27 @@ CLIENT_NAME="${CLIENT_NAME:-myclient}"
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt for license email
 # ─────────────────────────────────────────────────────────────────────────────
-if [[ -z "${SUBSCRIPTION_EMAIL:-}" ]]; then
+if [ -z "${SUBSCRIPTION_EMAIL:-}" ]; then
   echo ""
   while true; do
-    echo -ne "${YELLOW}Enter an email to manage your license: ${NC}"
+    printf "${YELLOW}Enter an email to manage your license: ${NC}"
     read -r SUBSCRIPTION_EMAIL
-    if [[ -n "$SUBSCRIPTION_EMAIL" && "$SUBSCRIPTION_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-      break
-    else
-      err "Please enter a valid email address"
-    fi
+    case "$SUBSCRIPTION_EMAIL" in
+      ?*@?*.?*) break ;;
+      *) err "Please enter a valid email address" ;;
+    esac
   done
 
   # Prompt for terms acceptance
   echo ""
   echo "Please review the Terms & Conditions at: https://tide.org/legal"
   while true; do
-    echo -ne "${YELLOW}I agree to the Terms & Conditions (enter 'y' or 'yes' to continue): ${NC}"
+    printf "${YELLOW}I agree to the Terms & Conditions (enter 'y' or 'yes' to continue): ${NC}"
     read -r TERMS_ACCEPTANCE
-    if [[ "$TERMS_ACCEPTANCE" == "y" || "$TERMS_ACCEPTANCE" == "yes" ]]; then
-      break
-    else
-      err "You must explicitly agree to the Terms & Conditions by entering 'y' or 'yes'"
-    fi
+    case "$TERMS_ACCEPTANCE" in
+      y|yes) break ;;
+      *) err "You must explicitly agree to the Terms & Conditions by entering 'y' or 'yes'" ;;
+    esac
   done
   echo ""
 fi
@@ -77,11 +75,13 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # sed -i portability
 # ─────────────────────────────────────────────────────────────────────────────
-if sed --version >/dev/null 2>&1; then
-  SED_INPLACE=(-i)
-else
-  SED_INPLACE=(-i '')
-fi
+sed_inplace() {
+  if sed --version >/dev/null 2>&1; then
+    sed -i "$@"
+  else
+    sed -i '' "$@"
+  fi
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: grab an admin token
@@ -106,9 +106,9 @@ TMP_REALM_JSON="$(mktemp)"
 cp "${REALM_JSON_PATH}" "${TMP_REALM_JSON}"
 
 # replace placeholders
-sed "${SED_INPLACE[@]}" "s|http://localhost:3000|${CLIENT_APP_URL}|g" "${TMP_REALM_JSON}"
-sed "${SED_INPLACE[@]}" "s|forseti-test|${REALM_NAME}|g"      "${TMP_REALM_JSON}"
-sed "${SED_INPLACE[@]}" "s|myclient|${CLIENT_NAME}|g"        "${TMP_REALM_JSON}"
+sed_inplace "s|http://localhost:3000|${CLIENT_APP_URL}|g" "${TMP_REALM_JSON}"
+sed_inplace "s|forseti-test|${REALM_NAME}|g"      "${TMP_REALM_JSON}"
+sed_inplace "s|myclient|${CLIENT_NAME}|g"        "${TMP_REALM_JSON}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 2: create realm (allow 409 if already exists)
@@ -121,12 +121,10 @@ status=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Content-Type: application/json" \
   --data-binary @"${TMP_REALM_JSON}")
 
-if [[ ${status} == 2* || ${status} -eq 409 ]]; then
-  ok "Realm created (or already exists)."
-else
-  err "Realm creation failed (HTTP ${status})"
-  exit 1
-fi
+case "$status" in
+  2*|409) ok "Realm created (or already exists)." ;;
+  *)      err "Realm creation failed (HTTP ${status})"; exit 1 ;;
+esac
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 3: initialize Tide realm + IGA
@@ -152,16 +150,19 @@ ok "Tide realm + IGA done."
 # Approve & commit change-sets
 # ─────────────────────────────────────────────────────────────────────────────
 approve_and_commit() {
-  local TYPE=$1
+  TYPE=$1
   log "Processing ${TYPE} change-sets..."
   TOKEN="$(get_admin_token)"
   curl -s -X GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/change-set/${TYPE}/requests" \
        -H "Authorization: Bearer ${TOKEN}" \
     | jq -c '.[]' | while read -r req; do
+        id=$(echo "${req}" | jq -r .draftRecordId)
+        cst=$(echo "${req}" | jq -r .changeSetType)
+        at=$(echo "${req}" | jq -r .actionType)
         payload=$(jq -n \
-          --arg id  "$(jq -r .draftRecordId   <<< "${req}")" \
-          --arg cst "$(jq -r .changeSetType   <<< "${req}")" \
-          --arg at  "$(jq -r .actionType      <<< "${req}")" \
+          --arg id  "$id" \
+          --arg cst "$cst" \
+          --arg at  "$at" \
           '{changeSetId:$id,changeSetType:$cst,actionType:$at}')
 
         curl -s -X POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/change-set/sign" \
@@ -176,7 +177,7 @@ approve_and_commit() {
              -d "${payload}" \
           > /dev/null
       done
-  ok "${TYPE^} change-sets done."
+  ok "${TYPE} change-sets done."
 }
 approve_and_commit clients
 
@@ -235,22 +236,29 @@ while true; do
     "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users?username=admin" \
     -H "Authorization: Bearer ${TOKEN}")
 
-  KEY=$(jq -r '.[0].attributes.tideUserKey[0] // empty' <<< "${ATTRS}")
-  VUID=$(jq -r '.[0].attributes.vuid[0]        // empty' <<< "${ATTRS}")
+  KEY=$(echo "${ATTRS}" | jq -r '.[0].attributes.tideUserKey[0] // empty')
+  VUID=$(echo "${ATTRS}" | jq -r '.[0].attributes.vuid[0]        // empty')
 
-  if [[ -n "${KEY}" && -n "${VUID}" ]]; then
+  if [ -n "${KEY}" ] && [ -n "${VUID}" ]; then
     ok "Linked!"
     break
   fi
 
-  if (( attempt >= MAX_TRIES )); then
+  if [ "$attempt" -ge "$MAX_TRIES" ]; then
     warn "Max retries reached (${MAX_TRIES}). Moving on."
     break
   fi
 
-  read -t 30 -p "Not linked yet; press ENTER to retry or wait 30s..." || true
+  # Wait up to 30s for user input, or timeout and continue
+  printf "Not linked yet; press ENTER to retry or wait 30s..."
+  if read -r -t 30 _ 2>/dev/null; then
+    :
+  else
+    # read -t not supported or timed out
+    sleep 30
+  fi
   echo
-  ((attempt++))
+  attempt=$((attempt + 1))
 done
 
 approve_and_commit users
@@ -265,7 +273,7 @@ INST_JSON=$(curl -s -X GET \
   "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/tide" \
   -H "Authorization: Bearer ${TOKEN}")
 
-UPDATED_JSON=$(jq --arg d "${CLIENT_APP_URL}" '.config.CustomAdminUIDomain = $d' <<< "${INST_JSON}")
+UPDATED_JSON=$(echo "${INST_JSON}" | jq --arg d "${CLIENT_APP_URL}" '.config.CustomAdminUIDomain = $d')
 
 curl -s -X PUT "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/tide" \
      -H "Authorization: Bearer ${TOKEN}" \
