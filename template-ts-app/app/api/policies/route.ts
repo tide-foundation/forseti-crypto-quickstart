@@ -5,6 +5,7 @@ import {
     AddPolicyRequestDecision,
     CommitPolicyRequest,
     GetAllCommittedPolicies,
+    ClearAllPolicies,
 } from "@/lib/database/policyDb";
 import { bytesToBase64 } from "@/lib/tideSerialization";
 
@@ -27,6 +28,16 @@ export async function GET(req: NextRequest) {
         return NextResponse.json(policies);
     } catch (ex) {
         console.error("Error getting policies:", ex);
+        return NextResponse.json({ error: "Internal Server Error: " + ex }, { status: 500 });
+    }
+}
+
+export async function DELETE() {
+    try {
+        ClearAllPolicies();
+        return NextResponse.json({ message: "All policies cleared" });
+    } catch (ex) {
+        console.error("Error clearing policies:", ex);
         return NextResponse.json({ error: "Internal Server Error: " + ex }, { status: 500 });
     }
 }

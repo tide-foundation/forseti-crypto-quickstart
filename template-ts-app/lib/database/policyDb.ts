@@ -111,6 +111,12 @@ export async function CommitPolicyRequest(id: string, policySignature: Uint8Arra
     }
 }
 
+export function ClearAllPolicies() {
+    db.prepare('DELETE FROM policy_request_decisions').run();
+    db.prepare('DELETE FROM pending_policy_requests').run();
+    db.prepare('DELETE FROM committed_policies').run();
+}
+
 export async function GetAllCommittedPolicies(): Promise<Policy[]> {
     const rows = db.prepare('SELECT data FROM committed_policies')
         .all() as { data: string }[];

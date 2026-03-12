@@ -37,6 +37,13 @@ if [[ "$MISSING" -ne 0 ]]; then
   exit 1
 fi
 
+# Check Docker daemon is running
+if ! sudo docker info &>/dev/null; then
+  err "Docker is installed but the service isn't running."
+  echo -e "       Start it with: ${CYAN}sudo systemctl start docker${NC}"
+  exit 1
+fi
+
 ok "All prerequisites satisfied."
 
 # ─── Start TideCloak container ───

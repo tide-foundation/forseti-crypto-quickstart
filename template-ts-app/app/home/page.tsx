@@ -211,6 +211,137 @@ function WelcomeModal({ onClose }: { onClose: () => void }) {
     );
 }
 
+// ─── Guide Widget ─────────────────────────────────────────────────────────
+
+interface GuideState {
+    pendingCount: number;
+    hasCommitReady: boolean;
+    policyLoaded: boolean;
+    hasEncryptedResult: boolean;
+    hasDecryptedResult: boolean;
+}
+
+function getGuideStep(state: GuideState): { step: number; title: string; message: string; tip: string } {
+    const { pendingCount, hasCommitReady, policyLoaded, hasEncryptedResult, hasDecryptedResult } = state;
+
+    if (!policyLoaded && pendingCount === 0) {
+        return {
+            step: 2,
+            title: "Create a Policy",
+            message: "Time to lay down the law! Pick your encryption rules below. Want to restrict who can encrypt? Add a role. Feeling chaotic? Leave it all open. Then smash that \"Create Forseti Policy\" button.",
+            tip: "A policy is basically a bouncer for your data. It decides who gets in (encrypt) and who gets out (decrypt). No policy, no party.",
+        };
+    }
+    if (!policyLoaded && pendingCount > 0 && !hasCommitReady) {
+        return {
+            step: 2,
+            title: "Approve the Policy",
+            message: "Your policy is sitting in the waiting room. Be a good admin and click \"Review & Approve\" to let it through!",
+            tip: "We don't just let any policy waltz in here. Every rule needs an admin stamp of approval first. Trust issues? Maybe. But it keeps things secure!",
+        };
+    }
+    if (!policyLoaded && pendingCount > 0 && hasCommitReady) {
+        return {
+            step: 2,
+            title: "Commit to Network",
+            message: "Your policy passed the vibe check! Hit \"Commit to Tide Network\" to send it out into the world.",
+            tip: "Committing blasts your contract to every ORK node on the network. Think of it like publishing a new law, except way faster and with less paperwork.",
+        };
+    }
+    if (policyLoaded && !hasEncryptedResult) {
+        return {
+            step: 3,
+            title: "Encrypt Some Data",
+            message: "Your policy is live and ready to rumble! Type in your deepest, darkest secret (or just \"hello\"), give it a tag, and click \"Encrypt\".",
+            tip: "Tags are attached to your encrypted payload and get evaluated by the contract on every request. For example, the DecryptTimeLock tag tells the contract to block decryption until a specific time. Every ORK node runs your contract before letting anything through.",
+        };
+    }
+    if (policyLoaded && hasEncryptedResult && !hasDecryptedResult) {
+        return {
+            step: 3,
+            title: "Decrypt It Back",
+            message: "Look at all that beautiful gibberish! Your encrypted data is already in the Decrypt panel. Click \"Decrypt\" to turn it back into something readable.",
+            tip: "Same contract, same rules, other direction. If you set a time lock, you'll have to wait it out. No shortcuts, no cheat codes!",
+        };
+    }
+    return {
+        step: 3,
+        title: "You Did It!",
+        message: "Full lifecycle, done and dusted! You just created, approved, committed, encrypted, and decrypted like a pro. Hit \"Start Again\" to go another round!",
+        tip: "Try cranking up the difficulty next time. Add role restrictions, set a time lock, or go full mad scientist and edit the C# contract in the sidebar!",
+    };
+}
+
+function GuideWidget({ state, stepRefs, cardRef }: {
+    state: GuideState;
+    stepRefs: React.RefObject<(HTMLDivElement | null)[]>;
+    cardRef: React.RefObject<HTMLDivElement | null>;
+}) {
+    const [dismissed, setDismissed] = useState(false);
+    const guide = getGuideStep(state);
+    const [offsetTop, setOffsetTop] = useState(0);
+    const [hearts, setHearts] = useState<number[]>([]);
+
+    const spawnHeart = () => {
+        const id = Date.now();
+        setHearts(prev => [...prev, id]);
+        setTimeout(() => setHearts(prev => prev.filter(h => h !== id)), 900);
+    };
+
+    // Map guide step number to card step index (0=step1, 1=step2, 2=step3)
+    const cardStepIndex = guide.step <= 2 ? 1 : 2;
+
+    useEffect(() => {
+        const compute = () => {
+            const steps = stepRefs.current;
+            const card = cardRef.current;
+            if (!steps || !card) return;
+            const stepEl = steps[cardStepIndex];
+            if (!stepEl) return;
+            const cardRect = card.getBoundingClientRect();
+            const stepRect = stepEl.getBoundingClientRect();
+            setOffsetTop(stepRect.top - cardRect.top);
+        };
+        compute();
+        window.addEventListener('resize', compute);
+        // Recompute on any state change with a small delay for DOM updates
+        const timer = setTimeout(compute, 50);
+        return () => {
+            window.removeEventListener('resize', compute);
+            clearTimeout(timer);
+        };
+    }, [cardStepIndex, state, stepRefs, cardRef]);
+
+    if (dismissed) {
+        return (
+            <div className="guide-container" style={{ top: offsetTop }}>
+                <div className="guide-avatar" onClick={() => { spawnHeart(); setDismissed(false); }} title="Show guide">
+                    <img src="/guide-avatar.jpg" alt="Guide" className="guide-avatar-img" />
+                    {hearts.map(id => <span key={id} className="guide-heart">&#10084;</span>)}
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="guide-container" style={{ top: offsetTop }}>
+            <div className="guide-avatar" onClick={spawnHeart}>
+                <img src="/guide-avatar.jpg" alt="Guide" className="guide-avatar-img" />
+                {hearts.map(id => <span key={id} className="guide-heart">&#10084;</span>)}
+            </div>
+            <div className="guide-bubble">
+                <button className="guide-close" onClick={() => setDismissed(true)}>&times;</button>
+                <div className="guide-bubble-header">
+                    <span className="guide-step-badge">{guide.step}</span>
+                    <span className="guide-title">{guide.title}</span>
+                </div>
+                <p className="guide-message">{guide.message}</p>
+                <p className="guide-tip">{guide.tip}</p>
+            </div>
+        </div>
+    );
+}
+
 // ─── Policy Preview Component ───────────────────────────────────────────────
 
 function PolicyPreview({
@@ -803,7 +934,12 @@ export default function HomePage() {
         setEncryptedInput(encryptedResult);
     };
 
-    const handleStartAgain = () => {
+    const handleStartAgain = async () => {
+        try {
+            await fetch("/api/policies", { method: "DELETE" });
+        } catch (e) {
+            console.error("Failed to clear policies:", e);
+        }
         setForsetiPolicy(null);
         setPolicyLoaded(false);
         setCommittedParams(null);
@@ -823,6 +959,8 @@ export default function HomePage() {
         setEditedContract(defaultForsetiContract);
         setContractModified(false);
         setMessage("");
+        setMessageType("info");
+        setLoadingAction(null);
     };
 
     // ─── UI Handlers ────────────────────────────────────────────────────────
@@ -840,6 +978,10 @@ export default function HomePage() {
         }
     };
 
+    // Refs for guide positioning
+    const cardRef = useRef<HTMLDivElement>(null);
+    const stepRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
+
     if (isLoading) return <div className="page-container"><p style={{ color: 'var(--text-muted)' }}>Loading...</p></div>;
     if (!isAuthenticated) return <div className="page-container"><p style={{ color: 'var(--text-muted)' }}>Redirecting...</p></div>;
 
@@ -853,10 +995,19 @@ export default function HomePage() {
             decryptRole: requireDecryptRole ? decryptRole.trim() || "" : null,
         };
 
+    const guideState: GuideState = {
+        pendingCount: pendingPolicies.length,
+        hasCommitReady: pendingPolicies.some(p => p.commitReady),
+        policyLoaded,
+        hasEncryptedResult: !!encryptedResult,
+        hasDecryptedResult: !!decryptedResult,
+    };
+
     return (
         <div className="page-container page-container-with-preview">
             {showWelcome && <WelcomeModal onClose={dismissWelcome} />}
-            <div className="card">
+            <GuideWidget state={guideState} stepRefs={stepRefs} cardRef={cardRef} />
+            <div className="card" ref={cardRef}>
                 {/* ─── Header ──────────────────────────────────────────── */}
                 <div className="card-header">
                     <h1>Forseti Crypto Quickstart</h1>
@@ -881,7 +1032,7 @@ export default function HomePage() {
                     )}
 
                     {/* ─── Step 1: Logged In ───────────────────────────── */}
-                    <div className="step completed">
+                    <div className="step completed" ref={el => { stepRefs.current[0] = el; }}>
                         <div className="step-header">
                             <span className="step-number done">1</span>
                             <span className="step-title">Authenticated via TideCloak</span>
@@ -892,7 +1043,7 @@ export default function HomePage() {
                     </div>
 
                     {/* ─── Step 2: Forseti Policy ──────────────────────── */}
-                    <div className={`step${policyLoaded ? ' completed' : !policyLoaded && pendingPolicies.length === 0 ? ' active' : ''}`}>
+                    <div className={`step${policyLoaded ? ' completed' : !policyLoaded && pendingPolicies.length === 0 ? ' active' : ''}`} ref={el => { stepRefs.current[1] = el; }}>
                         <div className="step-header">
                             <span className={`step-number${policyLoaded ? ' done' : ' active'}`}>2</span>
                             <span className="step-title">Forseti Encryption Policy</span>
@@ -1070,7 +1221,7 @@ export default function HomePage() {
                     </div>
 
                     {/* ─── Step 3: Encrypt & Decrypt ───────────────────── */}
-                    <div className={`step${policyLoaded ? ' active' : ''}`}>
+                    <div className={`step${policyLoaded ? ' active' : ''}`} ref={el => { stepRefs.current[2] = el; }}>
                         <div className="step-header">
                             <span className={`step-number${policyLoaded ? ' active' : ''}`}>3</span>
                             <span className="step-title">Encrypt & Decrypt</span>

@@ -103,11 +103,19 @@ body {
 /* ─── Message Banner ─────────────────────────────────────────────────── */
 
 .message-banner {
+    position: fixed;
+    top: 0.75rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.6rem 0.85rem;
+    padding: 0.6rem 1.25rem;
     border-radius: var(--radius-xs);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    max-width: 600px;
+    width: max-content;
     font-size: 0.82rem;
     line-height: 1.4;
     margin-bottom: 1.25rem;
@@ -688,6 +696,7 @@ textarea.input {
 .page-container-with-preview .card {
     flex: 0 1 680px;
     min-width: 0;
+    order: 0;
 }
 
 /* ─── Policy Preview Panel ──────────────────────────────────────────── */
@@ -697,6 +706,7 @@ textarea.input {
     min-width: 320px;
     position: sticky;
     top: 2rem;
+    order: 2;
     background: #1e293b;
     border-radius: var(--radius);
     box-shadow: var(--shadow-lg);
@@ -1512,6 +1522,174 @@ textarea.input {
     color: var(--text);
 }
 
+/* ─── Guide Widget ──────────────────────────────────────────────────── */
+
+.guide-container {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0.5rem;
+    z-index: 50;
+    flex-shrink: 0;
+    align-self: flex-start;
+    order: -1;
+    animation: guide-in 0.3s ease-out;
+    transition: top 0.3s ease;
+}
+
+@keyframes guide-in {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+.guide-avatar {
+    position: relative;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+    filter: drop-shadow(0 2px 8px rgba(37, 99, 235, 0.3));
+    transition: transform 0.2s;
+    margin-top: 2px;
+}
+
+.guide-avatar:hover {
+    transform: scale(1.1);
+}
+
+.guide-avatar-img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.guide-heart {
+    position: absolute;
+    left: 50%;
+    top: -4px;
+    font-size: 1rem;
+    color: #ef4444;
+    pointer-events: none;
+    animation: heart-float 0.9s ease-out forwards;
+    z-index: 60;
+}
+
+@keyframes heart-float {
+    0% {
+        opacity: 1;
+        transform: translate(-50%, 0) scale(0.6);
+    }
+    50% {
+        opacity: 1;
+        transform: translate(-50%, -30px) scale(1);
+    }
+    75% {
+        opacity: 1;
+        transform: translate(-50%, -42px) scale(1.4);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -48px) scale(2);
+    }
+}
+
+.guide-bubble {
+    position: relative;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    padding: 0.75rem;
+    width: 240px;
+}
+
+.guide-bubble::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 14px;
+    width: 0;
+    height: 0;
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+    border-right: 8px solid #334155;
+}
+
+.guide-bubble::after {
+    content: '';
+    position: absolute;
+    left: -6px;
+    top: 15px;
+    width: 0;
+    height: 0;
+    border-top: 7px solid transparent;
+    border-bottom: 7px solid transparent;
+    border-right: 7px solid #1e293b;
+}
+
+.guide-bubble .guide-close {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    background: none;
+    border: none;
+    color: #475569;
+    cursor: pointer;
+    font-size: 0.9rem;
+    line-height: 1;
+    padding: 0.15rem 0.3rem;
+    border-radius: 3px;
+    transition: color 0.15s;
+}
+
+.guide-bubble .guide-close:hover {
+    color: #e2e8f0;
+}
+
+.guide-bubble-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.4rem;
+    padding-right: 1rem;
+}
+
+.guide-step-badge {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #fff;
+    background: var(--primary);
+    flex-shrink: 0;
+}
+
+.guide-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #e2e8f0;
+}
+
+.guide-message {
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    line-height: 1.5;
+    margin-bottom: 0.35rem;
+}
+
+.guide-tip {
+    font-size: 0.68rem;
+    color: #64748b;
+    line-height: 1.45;
+    font-style: italic;
+}
+
 /* ─── Responsive ────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
@@ -1525,5 +1703,9 @@ textarea.input {
         max-width: 720px;
         position: static;
         order: -1;
+    }
+
+    .guide-container {
+        display: none;
     }
 }

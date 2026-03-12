@@ -1,6 +1,8 @@
 # Forseti Crypto Quickstart
 
-Policy-enabled encryption and decryption using Forseti smart contracts with TideCloak.
+A hands-on demo app that walks you through policy-controlled encryption and decryption using Forseti smart contracts on the Tide network. Build a policy, commit it to the ORK nodes, then encrypt and decrypt data - all governed by rules you define in C#.
+
+This project is designed as a starting point for developers who want to integrate Forseti into their own apps. Clone it, run the setup, and you'll have a working example of identity-based cryptographic access control in minutes.
 
 ## What is Forseti?
 
@@ -45,6 +47,13 @@ Contracts can implement up to three validation methods:
 - `curl` and `jq` (used by the init script)
 
 ## Getting Started
+
+### 0. Clone the repo
+
+```bash
+git clone https://github.com/tide-foundation/forseti-crypto-quickstart.git
+cd forseti-crypto-quickstart/template-ts-app
+```
 
 ### 1. Initialize TideCloak
 
