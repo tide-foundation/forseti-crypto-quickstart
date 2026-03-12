@@ -20,6 +20,10 @@
                 "description": "Procurement officer role for Forseti decryption"
             },
             {
+                "name": "_tide_x.selfdecrypt",
+                "description": "Tide self-decrypt role"
+            },
+            {
                 "name": "default-roles-forseti-test",
                 "description": "${role_default-roles}",
                 "composite": true,
@@ -27,7 +31,8 @@
                     "realm": [
                         "executive",
                         "factoryoperator",
-                        "procurementofficer"
+                        "procurementofficer",
+                        "_tide_x.selfdecrypt"
                     ]
                 }
             }

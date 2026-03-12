@@ -69,6 +69,148 @@ function PolicyTooltip({ text }: { text: string }) {
     );
 }
 
+// ─── Welcome Modal ─────────────────────────────────────────────────────────
+
+function WelcomeModal({ onClose }: { onClose: () => void }) {
+    const [step, setStep] = useState(0);
+    const totalSteps = 3;
+
+    const pages = [
+        {
+            title: 'What is Forseti?',
+            subtitle: 'The authorisation engine behind this demo',
+            content: (
+                <>
+                    <p>
+                        Forseti is an authorisation engine that executes C# smart contracts to make <strong>allow or deny</strong> decisions at the cryptographic level.
+                    </p>
+                    <p>
+                        Every cryptographic action (encryption, decryption, signing) must provide a contract as input. Without a valid contract, the request is automatically denied.
+                    </p>
+                    <div className="modal-highlight">
+                        <h4>How it works</h4>
+                        <p>
+                            Contracts run in isolation on the <strong>Tide ORK network</strong>, a decentralized set of nodes that manage cryptographic keys. Each contract is compiled from C# source via Roslyn, IL-vetted to block unsafe operations, and executed in a sandboxed process with OS-level resource limits.
+                        </p>
+                        <p>
+                            Every ORK node independently evaluates the same contract against the same input, making the allow/deny decision <strong>deterministic and tamper-proof</strong>. No single party, not even the app developer, can bypass the rules.
+                        </p>
+                    </div>
+                </>
+            ),
+        },
+        {
+            title: 'Validation Stages',
+            subtitle: 'Three gates that control every request',
+            content: (
+                <>
+                    <p>Contracts have three validation stages that gate different aspects of a request:</p>
+                    <div className="modal-steps">
+                        <div className="modal-step">
+                            <span className="modal-step-num modal-step-num-sm">D</span>
+                            <div>
+                                <strong>ValidateData</strong>
+                                <p>Always runs. Validates the request payload, e.g. &quot;is this value within allowed limits?&quot;</p>
+                            </div>
+                        </div>
+                        <div className="modal-step">
+                            <span className="modal-step-num modal-step-num-sm">A</span>
+                            <div>
+                                <strong>ValidateApprovers</strong>
+                                <p>Runs when approval is EXPLICIT. Checks that the right people have signed off: quorum counts, distinct organisations, role requirements.</p>
+                            </div>
+                        </div>
+                        <div className="modal-step">
+                            <span className="modal-step-num modal-step-num-sm">E</span>
+                            <div>
+                                <strong>ValidateExecutor</strong>
+                                <p>Runs when execution is PRIVATE. Verifies the identity and roles of the person triggering the action.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="modal-highlight" style={{ marginTop: '0.75rem' }}>
+                        <p>
+                            A contract&apos;s identity is the <strong>SHA-512 hash of its source code</strong>. Policy parameters (like role names or time locks) are bound at runtime via <code>[PolicyParam]</code> attributes, keeping the contract reusable across configurations.
+                        </p>
+                    </div>
+                </>
+            ),
+        },
+        {
+            title: 'What this demo does',
+            subtitle: 'Three steps to policy-enabled encryption',
+            content: (
+                <>
+                    <p>This app walks you through the full lifecycle of a Forseti encryption policy:</p>
+                    <div className="modal-steps">
+                        <div className="modal-step">
+                            <span className="modal-step-num">1</span>
+                            <div>
+                                <strong>Create a policy</strong>
+                                <p>Configure a Forseti contract with parameters: role-based encryption/decryption restrictions and optional time locks.</p>
+                            </div>
+                        </div>
+                        <div className="modal-step">
+                            <span className="modal-step-num">2</span>
+                            <div>
+                                <strong>Approve &amp; commit</strong>
+                                <p>An admin reviews and approves the policy. On commit, the ORK network compiles and stores the contract for future requests.</p>
+                            </div>
+                        </div>
+                        <div className="modal-step">
+                            <span className="modal-step-num">3</span>
+                            <div>
+                                <strong>Encrypt &amp; decrypt</strong>
+                                <p>Every encrypt/decrypt request is evaluated by the contract on each ORK node. It checks your roles and time locks before allowing the operation.</p>
+                            </div>
+                        </div>
+                    </div>
+                </>
+            ),
+        },
+    ];
+
+    const page = pages[step];
+    const isLast = step === totalSteps - 1;
+    const isFirst = step === 0;
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-header">
+                    <p className="modal-header-label">Welcome to Forseti Crypto Quickstart</p>
+                    <h2>{page.title}</h2>
+                    <p className="modal-header-subtitle">{page.subtitle}</p>
+                    <div className="modal-dots">
+                        {pages.map((_, i) => (
+                            <span key={i} className={`modal-dot${i === step ? ' active' : ''}`} onClick={() => setStep(i)} />
+                        ))}
+                    </div>
+                </div>
+                <div className="modal-body">
+                    {page.content}
+                </div>
+                <div className="modal-footer">
+                    {!isFirst && (
+                        <button onClick={() => setStep(step - 1)} className="btn btn-secondary btn-lg modal-btn-back">
+                            Back
+                        </button>
+                    )}
+                    {isLast ? (
+                        <button onClick={onClose} className="btn btn-primary btn-lg modal-btn-next">
+                            Get Started
+                        </button>
+                    ) : (
+                        <button onClick={() => setStep(step + 1)} className="btn btn-primary btn-lg modal-btn-next">
+                            Next
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // ─── Policy Preview Component ───────────────────────────────────────────────
 
 function PolicyPreview({
@@ -76,7 +218,6 @@ function PolicyPreview({
     committed,
     encryptRole,
     decryptRole,
-    timeLockEpoch,
     contractSource,
     onContractChange,
     contractModified,
@@ -87,7 +228,6 @@ function PolicyPreview({
     committed: boolean;
     encryptRole: string | null;
     decryptRole: string | null;
-    timeLockEpoch: number | null;
     contractSource: string;
     onContractChange?: (newSource: string) => void;
     contractModified?: boolean;
@@ -95,7 +235,7 @@ function PolicyPreview({
     editable?: boolean;
 }) {
     const [contractOpen, setContractOpen] = useState(false);
-    const hasAnyParam = encryptRole !== null || decryptRole !== null || timeLockEpoch !== null;
+    const hasAnyParam = encryptRole !== null || decryptRole !== null;
 
     const editorRef = useRef<HTMLTextAreaElement>(null);
     const highlightRef = useRef<HTMLPreElement>(null);
@@ -173,7 +313,7 @@ function PolicyPreview({
 
                 <div className="policy-field">
                     <span className="policy-key">params</span>
-                    <PolicyTooltip text="Custom values passed to the contract, such as EncryptionRealmRole or DecryptTimeLock. Think of the contract as a reusable function and params as its arguments." />
+                    <PolicyTooltip text="Custom values passed to the contract, such as EncryptionRealmRole. Think of the contract as a reusable function and params as its arguments." />
                     <span className="policy-val policy-val-arr">
                         {hasAnyParam ? "{" : "{ }"}
                     </span>
@@ -201,21 +341,6 @@ function PolicyPreview({
                                     <span className="policy-val policy-val-str">&quot;{decryptRole}&quot;</span>
                                 ) : (
                                     <span className="policy-val policy-val-placeholder">awaiting value...</span>
-                                )}
-                            </div>
-                        )}
-                        {timeLockEpoch !== null && (
-                            <div className="policy-field policy-field-indent policy-field-active">
-                                <span className="policy-key">DecryptTimeLock</span>
-                                {timeLockEpoch ? (
-                                    <span className="policy-val policy-val-num">
-                                        {timeLockEpoch}
-                                        <span className="policy-hint">
-                                            {new Date(timeLockEpoch * 1000).toLocaleDateString()}
-                                        </span>
-                                    </span>
-                                ) : (
-                                    <span className="policy-val policy-val-placeholder">pick a date...</span>
                                 )}
                             </div>
                         )}
@@ -315,6 +440,19 @@ export default function HomePage() {
         doEncrypt, doDecrypt,
     } = useAuth();
 
+    // Welcome modal
+    const [showWelcome, setShowWelcome] = useState(() => {
+        if (typeof window !== 'undefined') {
+            return !sessionStorage.getItem('forseti-welcome-dismissed');
+        }
+        return true;
+    });
+
+    const dismissWelcome = () => {
+        setShowWelcome(false);
+        sessionStorage.setItem('forseti-welcome-dismissed', '1');
+    };
+
     // Editable contract state
     const [editedContract, setEditedContract] = useState(defaultForsetiContract);
     const [contractModified, setContractModified] = useState(false);
@@ -328,6 +466,9 @@ export default function HomePage() {
         return () => clearTimeout(timer);
     }, [editedContract]);
 
+    // Browser detection
+    const isFirefox = typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent);
+
     // Policy state
     const [pendingPolicies, setPendingPolicies] = useState<PendingPolicy[]>([]);
     const [forsetiPolicy, setForsetiPolicy] = useState<Uint8Array | null>(null);
@@ -335,7 +476,6 @@ export default function HomePage() {
     const [committedParams, setCommittedParams] = useState<{
         encryptRole: string | null;
         decryptRole: string | null;
-        timeLockEpoch: number | null;
     } | null>(null);
 
     // Policy creation toggles
@@ -345,6 +485,10 @@ export default function HomePage() {
     const [decryptRole, setDecryptRole] = useState("");
     const [setTimeLock, setSetTimeLock] = useState(false);
     const [timeLockDate, setTimeLockDate] = useState("");
+
+    // Tags state
+    const [tags, setTags] = useState<string[]>([]);
+    const [tagInput, setTagInput] = useState("");
 
     // Encryption state
     const [plaintext, setPlaintext] = useState("");
@@ -424,11 +568,9 @@ export default function HomePage() {
                             const params = policy.params;
                             const encRole = params?.entries?.get("EncryptionRealmRole");
                             const decRole = params?.entries?.get("DecryptionRealmRole");
-                            const tLock = params?.entries?.get("DecryptTimeLock");
                             setCommittedParams({
                                 encryptRole: encRole != null ? String(encRole) : null,
                                 decryptRole: decRole != null ? String(decRole) : null,
-                                timeLockEpoch: tLock != null ? Number(tLock) : null,
                             });
                         } catch {
                             setCommittedParams(null);
@@ -462,10 +604,6 @@ export default function HomePage() {
             }
             if (requireDecryptRole && decryptRole.trim()) {
                 params.set("DecryptionRealmRole", decryptRole.trim());
-            }
-            if (setTimeLock && timeLockDate) {
-                const epochSeconds = Math.floor(new Date(timeLockDate).getTime() / 1000);
-                params.set("DecryptTimeLock", epochSeconds);
             }
 
             const newPolicyRequest = PolicySignRequest.New(new Policy({
@@ -581,6 +719,33 @@ export default function HomePage() {
         }
     };
 
+    // ─── Tags helpers ──────────────────────────────────────────────────────
+
+    const addTag = (value: string) => {
+        const trimmed = value.trim();
+        if (trimmed && !tags.includes(trimmed)) {
+            setTags([...tags, trimmed]);
+        }
+        setTagInput("");
+    };
+
+    const removeTag = (tag: string) => {
+        setTags(tags.filter(t => t !== tag));
+    };
+
+    const getEffectiveTags = () => {
+        const effective = [...tags];
+        // Auto-add time lock tag if configured
+        if (setTimeLock && timeLockDate) {
+            const epochSeconds = Math.floor(new Date(timeLockDate).getTime() / 1000);
+            const timeLockTag = `DecryptTimeLock:${epochSeconds}`;
+            if (!effective.includes(timeLockTag)) {
+                effective.push(timeLockTag);
+            }
+        }
+        return effective.length > 0 ? effective : ["default"];
+    };
+
     // ─── Step 3: Encrypt/Decrypt Handlers ───────────────────────────────────
 
     const handleEncrypt = async () => {
@@ -596,10 +761,11 @@ export default function HomePage() {
         try {
             showMessage("Encrypting...");
             const results = await doEncrypt(
-                [{ data: plaintext, tags: ["testdata"] }],
+                [{ data: plaintext, tags: getEffectiveTags() }],
                 forsetiPolicy
             );
             setEncryptedResult(results[0]);
+            setEncryptedInput(results[0]);
             showMessage("Encryption successful!", "success");
         } catch (error: any) {
             showMessage(`Encryption error: ${error.message}`, "error");
@@ -621,7 +787,7 @@ export default function HomePage() {
         try {
             showMessage("Decrypting...");
             const results = await doDecrypt(
-                [{ encrypted: encryptedInput, tags: ["testdata"] }],
+                [{ encrypted: encryptedInput, tags: getEffectiveTags() }],
                 forsetiPolicy
             );
             setDecryptedResult(String(results[0]));
@@ -648,6 +814,8 @@ export default function HomePage() {
         setDecryptRole("");
         setSetTimeLock(false);
         setTimeLockDate("");
+        setTags([]);
+        setTagInput("");
         setPlaintext("");
         setEncryptedResult("");
         setEncryptedInput("");
@@ -683,13 +851,11 @@ export default function HomePage() {
         : {
             encryptRole: requireEncryptRole ? encryptRole.trim() || "" : null,
             decryptRole: requireDecryptRole ? decryptRole.trim() || "" : null,
-            timeLockEpoch: setTimeLock && timeLockDate
-                ? Math.floor(new Date(timeLockDate).getTime() / 1000) || null
-                : null,
         };
 
     return (
         <div className="page-container page-container-with-preview">
+            {showWelcome && <WelcomeModal onClose={dismissWelcome} />}
             <div className="card">
                 {/* ─── Header ──────────────────────────────────────────── */}
                 <div className="card-header">
@@ -699,6 +865,7 @@ export default function HomePage() {
                         <code>{vuid.substring(0, 12)}...</code>
                     </div>
                     <div className="card-header-actions">
+                        <button onClick={() => setShowWelcome(true)} className="btn btn-outline btn-sm" title="About Forseti">?</button>
                         <button onClick={handleLogout} className="btn btn-outline btn-sm">Log out</button>
                         <button onClick={handleRefreshToken} className="btn btn-outline btn-sm">Refresh Token</button>
                         <button onClick={refreshAllData} className="btn btn-outline btn-sm">Refresh Data</button>
@@ -717,7 +884,7 @@ export default function HomePage() {
                     <div className="step completed">
                         <div className="step-header">
                             <span className="step-number done">1</span>
-                            <span className="step-title">Authenticated</span>
+                            <span className="step-title">Authenticated via TideCloak</span>
                         </div>
                         <p className="step-success">
                             Signed in as {username}
@@ -728,15 +895,20 @@ export default function HomePage() {
                     <div className={`step${policyLoaded ? ' completed' : !policyLoaded && pendingPolicies.length === 0 ? ' active' : ''}`}>
                         <div className="step-header">
                             <span className={`step-number${policyLoaded ? ' done' : ' active'}`}>2</span>
-                            <span className="step-title">Forseti Policy</span>
+                            <span className="step-title">Forseti Encryption Policy</span>
                         </div>
 
                         {policyLoaded ? (
-                            <p className="step-success">Policy loaded and ready to use.</p>
+                            <>
+                                <p className="step-success">Policy committed and active.</p>
+                                <p className="step-detail">
+                                    The Forseti smart contract is deployed on the Tide ORK network. All encrypt/decrypt operations below will be governed by this policy.
+                                </p>
+                            </>
                         ) : (
                             <>
                                 <p className="step-description" style={{ marginBottom: '0.75rem' }}>
-                                    Configure your encryption policy, then create, approve, and commit it.
+                                    A Forseti policy defines <strong>who</strong> can encrypt and decrypt, and <strong>when</strong>. Configure the rules below, then create the policy. It must be approved by an admin and committed to the Tide network before it takes effect.
                                 </p>
 
                                 {pendingPolicies.length === 0 && (
@@ -754,7 +926,9 @@ export default function HomePage() {
                                                 className="input"
                                             />
                                             <p className={`toggle-hint${encryptRole.trim() ? ' toggle-hint-active' : ''}`}>
-                                                Assign this realm role in TideCloak to allow users to encrypt.
+                                                {encryptRole.trim()
+                                                    ? `Only users with the "${encryptRole.trim()}" role in TideCloak will be able to encrypt data.`
+                                                    : 'Enter a TideCloak realm role name. Only users assigned this role will be allowed to encrypt.'}
                                             </p>
                                         </Toggle>
 
@@ -771,7 +945,9 @@ export default function HomePage() {
                                                 className="input"
                                             />
                                             <p className={`toggle-hint${decryptRole.trim() ? ' toggle-hint-active' : ''}`}>
-                                                Assign this realm role in TideCloak to allow users to decrypt.
+                                                {decryptRole.trim()
+                                                    ? `Only users with the "${decryptRole.trim()}" role in TideCloak will be able to decrypt data.`
+                                                    : 'Enter a TideCloak realm role name. Only users assigned this role will be allowed to decrypt.'}
                                             </p>
                                         </Toggle>
 
@@ -780,14 +956,60 @@ export default function HomePage() {
                                             onChange={setSetTimeLock}
                                             label="Set decryption time lock"
                                         >
-                                            <input
-                                                type="datetime-local"
-                                                value={timeLockDate}
-                                                onChange={(e) => setTimeLockDate(e.target.value)}
-                                                className="input"
-                                            />
+                                            {isFirefox ? (
+                                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                    <input
+                                                        type="date"
+                                                        value={timeLockDate.split('T')[0] || ''}
+                                                        onChange={(e) => {
+                                                            const time = timeLockDate.split('T')[1] || '00:00';
+                                                            setTimeLockDate(e.target.value ? `${e.target.value}T${time}` : '');
+                                                        }}
+                                                        className="input"
+                                                        style={{ flex: 2 }}
+                                                    />
+                                                    <select
+                                                        value={timeLockDate.split('T')[1]?.split(':')[0] || '00'}
+                                                        onChange={(e) => {
+                                                            const date = timeLockDate.split('T')[0] || '';
+                                                            const min = timeLockDate.split('T')[1]?.split(':')[1] || '00';
+                                                            if (date) setTimeLockDate(`${date}T${e.target.value}:${min}`);
+                                                        }}
+                                                        className="input"
+                                                        style={{ flex: 1 }}
+                                                    >
+                                                        {Array.from({ length: 24 }, (_, i) => (
+                                                            <option key={i} value={String(i).padStart(2, '0')}>{String(i).padStart(2, '0')}</option>
+                                                        ))}
+                                                    </select>
+                                                    <span style={{ color: 'var(--text-muted)', fontWeight: 700 }}>:</span>
+                                                    <select
+                                                        value={timeLockDate.split('T')[1]?.split(':')[1] || '00'}
+                                                        onChange={(e) => {
+                                                            const date = timeLockDate.split('T')[0] || '';
+                                                            const hr = timeLockDate.split('T')[1]?.split(':')[0] || '00';
+                                                            if (date) setTimeLockDate(`${date}T${hr}:${e.target.value}`);
+                                                        }}
+                                                        className="input"
+                                                        style={{ flex: 1 }}
+                                                    >
+                                                        {Array.from({ length: 60 }, (_, i) => (
+                                                            <option key={i} value={String(i).padStart(2, '0')}>{String(i).padStart(2, '0')}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            ) : (
+                                                <input
+                                                    type="datetime-local"
+                                                    value={timeLockDate}
+                                                    onChange={(e) => setTimeLockDate(e.target.value)}
+                                                    className="input"
+                                                />
+                                            )}
                                             <p className="toggle-hint">
-                                                Decryption will be blocked until this date and time.
+                                                {timeLockDate
+                                                    ? `Decryption will be blocked until ${new Date(timeLockDate).toLocaleString()}. The Tide network enforces this server-side and it cannot be bypassed client-side.`
+                                                    : 'Pick a date and time. The Tide ORK network will refuse decryption requests until this moment passes.'}
                                             </p>
                                         </Toggle>
 
@@ -804,14 +1026,19 @@ export default function HomePage() {
 
                                 {pendingPolicies.length > 0 && (
                                     <div>
+                                        <p className="step-detail" style={{ marginBottom: '0.5rem' }}>
+                                            {pendingPolicies.some(p => p.commitReady)
+                                                ? 'A policy has enough approvals and is ready to be committed to the Tide network.'
+                                                : 'Policies below need to be reviewed and approved by an admin before they can be committed.'}
+                                        </p>
                                         {pendingPolicies.map((policy) => (
                                             <div key={policy.id} className="pending-card">
                                                 <div className="pending-card-meta">
-                                                    {policy.contractId ? policy.contractId.substring(0, 20) + "..." : "Unknown contract"}
+                                                    Contract: {policy.contractId ? policy.contractId.substring(0, 20) + "..." : "Unknown"}
                                                 </div>
                                                 <div className="pending-card-status">
                                                     <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                                                        Approvals: {policy.approvedBy?.length || 0}
+                                                        {policy.approvedBy?.length || 0} approval{(policy.approvedBy?.length || 0) !== 1 ? 's' : ''}
                                                     </span>
                                                     {policy.commitReady ? (
                                                         <span className="badge badge-ready">Ready to commit</span>
@@ -821,17 +1048,17 @@ export default function HomePage() {
                                                 </div>
                                                 <div className="pending-card-actions">
                                                     {!policy.approvedBy?.includes(vuid) && !policy.commitReady && (
-                                                        <button onClick={() => handleReviewPolicy(policy)} disabled={!!loadingAction} className="btn btn-primary btn-sm">
+                                                        <button onClick={() => handleReviewPolicy(policy)} disabled={!!loadingAction} className="btn btn-action btn-sm">
                                                             {loadingAction === "review" ? "Reviewing..." : "Review & Approve"}
                                                         </button>
                                                     )}
                                                     {policy.commitReady && (
-                                                        <button onClick={() => handleCommitPolicy(policy)} disabled={!!loadingAction} className="btn btn-success btn-sm">
-                                                            {loadingAction === "commit" ? "Committing..." : "Commit Policy"}
+                                                        <button onClick={() => handleCommitPolicy(policy)} disabled={!!loadingAction} className="btn btn-action btn-sm">
+                                                            {loadingAction === "commit" ? "Committing..." : "Commit to Tide Network"}
                                                         </button>
                                                     )}
                                                     {policy.approvedBy?.includes(vuid) && !policy.commitReady && (
-                                                        <span style={{ fontSize: '0.8rem', color: 'var(--warning)' }}>You have approved this policy</span>
+                                                        <span style={{ fontSize: '0.8rem', color: 'var(--success)' }}>You approved this, waiting for more approvals</span>
                                                     )}
                                                 </div>
                                             </div>
@@ -851,84 +1078,155 @@ export default function HomePage() {
 
                         {!policyLoaded ? (
                             <p className="step-description" style={{ color: 'var(--text-muted)' }}>
-                                Complete Step 2 to enable encryption and decryption.
+                                Complete Step 2 to unlock encryption and decryption. The committed policy will govern who can perform these operations.
                             </p>
                         ) : (
-                            <div className="crypto-grid">
-                                {/* ── Encrypt Panel ── */}
-                                <div className="crypto-panel">
-                                    <h4>Encrypt</h4>
-                                    <label className="field-label">Plaintext</label>
-                                    <textarea
-                                        value={plaintext}
-                                        onChange={(e) => setPlaintext(e.target.value)}
-                                        placeholder="Enter text to encrypt..."
-                                        rows={3}
-                                        className="input input-mono"
-                                    />
-                                    <button
-                                        onClick={handleEncrypt}
-                                        disabled={loadingAction === "encrypt"}
-                                        className="btn btn-primary"
-                                        style={{ width: '100%', marginTop: '0.5rem' }}
-                                    >
-                                        {loadingAction === "encrypt" ? "Encrypting..." : "Encrypt"}
-                                    </button>
+                            <>
+                                <p className="step-description" style={{ marginBottom: '0.75rem' }}>
+                                    Data is encrypted and decrypted through the Tide ORK network. Tags are attached to the encrypted payload and evaluated by the contract. The Forseti contract enforces your policy rules server-side.
+                                </p>
 
-                                    {encryptedResult && (
-                                        <div className="result-box">
-                                            <div className="result-label">Encrypted output</div>
-                                            <div className="result-value">{encryptedResult}</div>
-                                            <button
-                                                onClick={handleCopyToDecrypt}
-                                                className="btn btn-ghost btn-sm"
-                                                style={{ marginTop: '0.5rem', width: '100%' }}
-                                            >
-                                                Copy to Decrypt
-                                            </button>
-                                        </div>
-                                    )}
+                                {/* ── Tags Section ── */}
+                                <div className="tags-section">
+                                    <label className="field-label">Tag Encryption</label>
+                                    <p className="tags-hint">
+                                        Label your encrypted data with a tag. The contract can use tags like <code>DecryptTimeLock:&#123;epoch&#125;</code> to enforce rules at decryption time.
+                                        {setTimeLock && timeLockDate && (
+                                            <span className="tags-hint-auto"> A time lock tag will be auto-added from your Step 2 configuration.</span>
+                                        )}
+                                    </p>
+                                    {(() => {
+                                        const hasTimeLock = !!(setTimeLock && timeLockDate);
+                                        const hasTag = tags.length > 0 || hasTimeLock;
+                                        const inputDisabled = hasTag;
+                                        return (
+                                            <div className="tags-input-row">
+                                                <input
+                                                    type="text"
+                                                    value={tagInput}
+                                                    onChange={(e) => setTagInput(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            addTag(tagInput);
+                                                        }
+                                                    }}
+                                                    placeholder={inputDisabled ? 'Tag already set' : 'Add a tag...'}
+                                                    className="input"
+                                                    disabled={inputDisabled}
+                                                />
+                                                <button
+                                                    onClick={() => addTag(tagInput)}
+                                                    disabled={!tagInput.trim() || inputDisabled}
+                                                    className="btn btn-outline btn-sm"
+                                                >
+                                                    Add
+                                                </button>
+                                            </div>
+                                        );
+                                    })()}
+                                    <div className="tags-list">
+                                        {getEffectiveTags().map((tag) => {
+                                            const isTimeLock = tag.startsWith("DecryptTimeLock:");
+                                            const isAutoTag = isTimeLock && !tags.includes(tag);
+                                            let readableTime = '';
+                                            if (isTimeLock) {
+                                                const epoch = parseInt(tag.split(':')[1], 10);
+                                                if (!isNaN(epoch)) {
+                                                    readableTime = new Date(epoch * 1000).toLocaleString();
+                                                }
+                                            }
+                                            return (
+                                                <span key={tag} className="tag-wrap">
+                                                    <span className={`tag${isTimeLock ? ' tag-timelock' : ''}${isAutoTag ? ' tag-auto' : ''}`}>
+                                                        {tag}
+                                                        {isAutoTag ? (
+                                                            <span className="tag-auto-label">auto</span>
+                                                        ) : (
+                                                            <button className="tag-remove" onClick={() => removeTag(tag)}>&times;</button>
+                                                        )}
+                                                    </span>
+                                                    {readableTime && <span className="tag-time-readable">{readableTime}</span>}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
 
-                                {/* ── Decrypt Panel ── */}
-                                <div className="crypto-panel">
-                                    <h4>Decrypt</h4>
-                                    <label className="field-label">Ciphertext</label>
-                                    <textarea
-                                        value={encryptedInput}
-                                        onChange={(e) => setEncryptedInput(e.target.value)}
-                                        placeholder="Paste encrypted data..."
-                                        rows={3}
-                                        className="input input-mono"
-                                    />
-                                    <button
-                                        onClick={handleDecrypt}
-                                        disabled={loadingAction === "decrypt"}
-                                        className="btn btn-primary"
-                                        style={{ width: '100%', marginTop: '0.5rem' }}
-                                    >
-                                        {loadingAction === "decrypt" ? "Decrypting..." : "Decrypt"}
-                                    </button>
+                                <div className="crypto-grid">
+                                    {/* ── Encrypt Panel ── */}
+                                    <div className="crypto-panel">
+                                        <h4>Encrypt</h4>
+                                        <label className="field-label">Plaintext</label>
+                                        <textarea
+                                            value={plaintext}
+                                            onChange={(e) => setPlaintext(e.target.value)}
+                                            placeholder="Type or paste any text to encrypt..."
+                                            rows={3}
+                                            className="input input-mono"
+                                        />
+                                        <button
+                                            onClick={handleEncrypt}
+                                            disabled={loadingAction === "encrypt"}
+                                            className="btn btn-primary"
+                                            style={{ width: '100%', marginTop: '0.5rem' }}
+                                        >
+                                            {loadingAction === "encrypt" ? "Encrypting..." : "Encrypt"}
+                                        </button>
 
-                                    {decryptedResult && (
-                                        <div className="result-box">
-                                            <div className="result-label">Decrypted output</div>
-                                            <div className="result-value">{decryptedResult}</div>
-                                        </div>
-                                    )}
+                                        {encryptedResult && (
+                                            <div className="result-box">
+                                                <div className="result-label">Encrypted output</div>
+                                                <div className="result-value">{encryptedResult}</div>
+                                                <button
+                                                    onClick={handleCopyToDecrypt}
+                                                    className="btn btn-ghost btn-sm"
+                                                    style={{ marginTop: '0.5rem', width: '100%' }}
+                                                >
+                                                    Copy to Decrypt Panel
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* ── Decrypt Panel ── */}
+                                    <div className="crypto-panel">
+                                        <h4>Decrypt</h4>
+                                        <label className="field-label">Ciphertext</label>
+                                        <textarea
+                                            value={encryptedInput}
+                                            onChange={(e) => setEncryptedInput(e.target.value)}
+                                            placeholder="Paste encrypted output here..."
+                                            rows={3}
+                                            className="input input-mono"
+                                        />
+                                        <button
+                                            onClick={handleDecrypt}
+                                            disabled={loadingAction === "decrypt"}
+                                            className="btn btn-primary"
+                                            style={{ width: '100%', marginTop: '0.5rem' }}
+                                        >
+                                            {loadingAction === "decrypt" ? "Decrypting..." : "Decrypt"}
+                                        </button>
+
+                                        {decryptedResult && (
+                                            <div className="result-box">
+                                                <div className="result-label">Decrypted output</div>
+                                                <div className="result-value">{decryptedResult}</div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
+                            </>
                         )}
                     </div>
 
                     {/* ─── Start Again ─────────────────────────────────── */}
-                    {policyLoaded && (
-                        <div className="start-again-section">
-                            <button onClick={handleStartAgain} className="btn btn-muted">
-                                Start Again
-                            </button>
-                        </div>
-                    )}
+                    <div className="start-again-section">
+                        <button onClick={handleStartAgain} className="btn btn-muted">
+                            Start Again
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -937,7 +1235,6 @@ export default function HomePage() {
                 committed={policyLoaded}
                 encryptRole={previewParams.encryptRole}
                 decryptRole={previewParams.decryptRole}
-                timeLockEpoch={previewParams.timeLockEpoch}
                 contractSource={editedContract}
                 onContractChange={(newSource) => {
                     setEditedContract(newSource);

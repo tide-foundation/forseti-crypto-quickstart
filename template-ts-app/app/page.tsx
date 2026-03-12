@@ -33,13 +33,27 @@ export default function LoginPage() {
                 <div className="login-header">
                     <h1>Forseti Crypto Quickstart</h1>
                     <p>
-                        Policy-enabled encryption and decryption using a Forseti contract with TideCloak.
+                        Policy-enabled encryption and decryption using a Forseti smart contract with TideCloak.
                     </p>
                 </div>
                 <div className="login-body">
                     <button onClick={onLogin} className="btn btn-primary btn-lg" style={{ width: '100%' }}>
                         Log In with TideCloak
                     </button>
+                    <div className="login-features">
+                        <div className="login-feature">
+                            <span className="login-feature-icon">1</span>
+                            <span>Authenticate with TideCloak</span>
+                        </div>
+                        <div className="login-feature">
+                            <span className="login-feature-icon">2</span>
+                            <span>Create &amp; approve an encryption policy</span>
+                        </div>
+                        <div className="login-feature">
+                            <span className="login-feature-icon">3</span>
+                            <span>Encrypt &amp; decrypt data with policy controls</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

@@ -9,7 +9,7 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "init": "bash init/tcinit.sh"
+    "init": "bash init/start.sh"
   },
   "dependencies": {
     "@tideorg/js": "0.13.21",

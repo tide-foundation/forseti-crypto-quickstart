@@ -17,6 +17,20 @@ elif [ -f "${SCRIPT_DIR}/.env.example" ]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Colors & logging
+# ─────────────────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log()  { echo -e "${CYAN}[tidecloak]${NC} $1"; }
+ok()   { echo -e "${GREEN}[tidecloak]${NC} $1"; }
+warn() { echo -e "${YELLOW}[tidecloak]${NC} $1"; }
+err()  { echo -e "${RED}[tidecloak]${NC} $1"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Defaults (override via env)
 # ─────────────────────────────────────────────────────────────────────────────
 TIDECLOAK_LOCAL_URL="${TIDECLOAK_LOCAL_URL:-http://localhost:8080}"
@@ -29,7 +43,36 @@ ADMIN_ROLE_NAME="tide-realm-admin"
 KC_USER="${KC_USER:-admin}"
 KC_PASSWORD="${KC_PASSWORD:-password}"
 CLIENT_NAME="${CLIENT_NAME:-myclient}"
-SUBSCRIPTION_EMAIL="${SUBSCRIPTION_EMAIL:-test@demo.org}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt for license email
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ -z "${SUBSCRIPTION_EMAIL:-}" ]]; then
+  echo ""
+  while true; do
+    echo -ne "${YELLOW}Enter an email to manage your license: ${NC}"
+    read -r SUBSCRIPTION_EMAIL
+    if [[ -n "$SUBSCRIPTION_EMAIL" && "$SUBSCRIPTION_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+      break
+    else
+      err "Please enter a valid email address"
+    fi
+  done
+
+  # Prompt for terms acceptance
+  echo ""
+  echo "Please review the Terms & Conditions at: https://tide.org/legal"
+  while true; do
+    echo -ne "${YELLOW}I agree to the Terms & Conditions (enter 'y' or 'yes' to continue): ${NC}"
+    read -r TERMS_ACCEPTANCE
+    if [[ "$TERMS_ACCEPTANCE" == "y" || "$TERMS_ACCEPTANCE" == "yes" ]]; then
+      break
+    else
+      err "You must explicitly agree to the Terms & Conditions by entering 'y' or 'yes'"
+    fi
+  done
+  echo ""
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # sed -i portability
@@ -71,7 +114,7 @@ sed "${SED_INPLACE[@]}" "s|myclient|${CLIENT_NAME}|g"        "${TMP_REALM_JSON}"
 # Step 2: create realm (allow 409 if already exists)
 # ─────────────────────────────────────────────────────────────────────────────
 TOKEN="$(get_admin_token)"
-echo "🌍 Creating realm..."
+log "Creating realm..."
 status=$(curl -s -o /dev/null -w "%{http_code}" \
   -X POST "${TIDECLOAK_LOCAL_URL}/admin/realms" \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -79,9 +122,9 @@ status=$(curl -s -o /dev/null -w "%{http_code}" \
   --data-binary @"${TMP_REALM_JSON}")
 
 if [[ ${status} == 2* || ${status} -eq 409 ]]; then
-  echo "✅ Realm created (or already exists)."
+  ok "Realm created (or already exists)."
 else
-  echo "❌ Realm creation failed (HTTP ${status})" >&2
+  err "Realm creation failed (HTTP ${status})"
   exit 1
 fi
 
@@ -89,7 +132,7 @@ fi
 # Step 3: initialize Tide realm + IGA
 # ─────────────────────────────────────────────────────────────────────────────
 TOKEN="$(get_admin_token)"
-echo "🔐 Initializing Tide realm + IGA..."
+log "Initializing Tide realm + IGA..."
 
 response=$(curl -i -X POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/vendorResources/setUpTideRealm" \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -103,14 +146,14 @@ curl -s -X POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/to
      --data-urlencode "isIGAEnabled=true" \
   > /dev/null
 
-echo "✅ Tide realm + IGA done."
+ok "Tide realm + IGA done."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Approve & commit change-sets
 # ─────────────────────────────────────────────────────────────────────────────
 approve_and_commit() {
   local TYPE=$1
-  echo "🔄 Processing ${TYPE} change-sets..."
+  log "Processing ${TYPE} change-sets..."
   TOKEN="$(get_admin_token)"
   curl -s -X GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/change-set/${TYPE}/requests" \
        -H "Authorization: Bearer ${TOKEN}" \
@@ -133,7 +176,7 @@ approve_and_commit() {
              -d "${payload}" \
           > /dev/null
       done
-  echo "✅ ${TYPE^} change-sets done."
+  ok "${TYPE^} change-sets done."
 }
 approve_and_commit clients
 
@@ -141,7 +184,7 @@ approve_and_commit clients
 # Step 4: create admin user + assign role
 # ─────────────────────────────────────────────────────────────────────────────
 TOKEN="$(get_admin_token)"
-echo "👤 Creating new admin user..."
+log "Creating admin user..."
 curl -s -X POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users" \
      -H "Authorization: Bearer ${TOKEN}" \
      -H "Content-Type: application/json" \
@@ -168,26 +211,26 @@ curl -s -X POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users/${USER_
      -d "[${ROLE_JSON}]" \
   > /dev/null
 
-echo "✅ Admin user & role done."
+ok "Admin user & role done."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 5: generate invite link + wait
 # ─────────────────────────────────────────────────────────────────────────────
 TOKEN="$(get_admin_token)"
-echo "🔗 Generating invite link..."
+log "Generating invite link..."
 INVITE_LINK=$(curl -s -X POST \
   "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tideAdminResources/get-required-action-link?userId=${USER_ID}&lifespan=43200" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
   -d '["link-tide-account-action"]')
 
-echo "🔗 Invite link: ${INVITE_LINK}"
-echo "→ Use (or send) this URL to link the first admin to their account."
+ok "Invite link: ${INVITE_LINK}"
+log "Use (or send) this URL to link the first admin to their account."
 
 MAX_TRIES=3
 attempt=1
 while true; do
-  echo -n "Checking link status (attempt ${attempt}/${MAX_TRIES})… "
+  log "Checking link status (attempt ${attempt}/${MAX_TRIES})..."
   ATTRS=$(curl -s -X GET \
     "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users?username=admin" \
     -H "Authorization: Bearer ${TOKEN}")
@@ -196,16 +239,16 @@ while true; do
   VUID=$(jq -r '.[0].attributes.vuid[0]        // empty' <<< "${ATTRS}")
 
   if [[ -n "${KEY}" && -n "${VUID}" ]]; then
-    echo "✅ Linked!"
+    ok "Linked!"
     break
   fi
 
   if (( attempt >= MAX_TRIES )); then
-    echo "⚠️  Max retries reached (${MAX_TRIES}). Moving on."
+    warn "Max retries reached (${MAX_TRIES}). Moving on."
     break
   fi
 
-  read -t 30 -p "Not linked yet; press ENTER to retry or wait 30s…" || true
+  read -t 30 -p "Not linked yet; press ENTER to retry or wait 30s..." || true
   echo
   ((attempt++))
 done
@@ -216,7 +259,7 @@ approve_and_commit users
 # Step 6: update CustomAdminUIDomain
 # ─────────────────────────────────────────────────────────────────────────────
 TOKEN="$(get_admin_token)"
-echo "🌐 Updating CustomAdminUIDomain..."
+log "Updating CustomAdminUIDomain..."
 
 INST_JSON=$(curl -s -X GET \
   "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/tide" \
@@ -234,14 +277,13 @@ curl -s -X POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/vendorResourc
      -H "Authorization: Bearer ${TOKEN}" \
   > /dev/null
 
-echo "✅ CustomAdminUIDomain updated + signed."
-
+ok "CustomAdminUIDomain updated + signed."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 7: fetch adapter config + cleanup
 # ─────────────────────────────────────────────────────────────────────────────
 TOKEN="$(get_admin_token)"
-echo "📥 Fetching adapter config…"
+log "Fetching adapter config..."
 CLIENT_UUID=$(curl -s -X GET \
   "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_NAME}" \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -253,7 +295,7 @@ curl -s -X GET \
   -H "Authorization: Bearer ${TOKEN}" \
   > "${ADAPTER_OUTPUT_PATH}"
 
-echo "✅ Adapter config saved to ${ADAPTER_OUTPUT_PATH}"
+ok "Adapter config saved to ${ADAPTER_OUTPUT_PATH}"
 rm -f "${PROJECT_ROOT}/.realm_name" "${TMP_REALM_JSON}"
 
-echo "🎉 All done!"
+ok "All done!"

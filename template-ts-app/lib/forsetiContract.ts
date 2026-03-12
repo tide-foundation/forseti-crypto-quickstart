@@ -9,15 +9,13 @@ public class Contract : IAccessPolicy
 {
 	[PolicyParam(Required = false, Description = "Role required for data encryption")]
     public string EncryptionRealmRole { get; set; }
-	
+
 	[PolicyParam(Required = false, Description = "Role required for data decryption")]
     public string DecryptionRealmRole { get; set; }
-	
-	[PolicyParam(Required = false, Description = "Optional value to only allow data decrpytion at a certain epoch time")]
-    public int DecryptTimeLock { get; set; }
-	
+
 	private bool isEncryptionRequest = false;
-	
+	private List<string> DataTags = new();
+
     public PolicyDecision ValidateData(DataContext ctx)
     {
 		if(ctx.RequestId == "PolicyEnabledEncryption:1")
@@ -32,21 +30,50 @@ public class Contract : IAccessPolicy
 		{
 			return PolicyDecision.Deny("This contract must only be used with Policy Enabled Encryption/Decryption requests");
 		}
-		
+
 		if (ctx.Policy.ExecutionType != ExecutionType.PRIVATE)
 		{
 			return PolicyDecision.Deny("Policy used against this contract must be EXPLICIT PRIVATE");
 		}
 
-		// Enforce Time Lock if decryption request
-		if(DecryptTimeLock != null && !isEncryptionRequest) 
+		// Extract tags from ctx.Data
+		ReadOnlyMemory<byte> data = ctx.Data;
+		if(isEncryptionRequest)
 		{
-			var currentTime = (int)Utils.GetEpochSeconds();
-			if(currentTime < DecryptTimeLock)
+			var time = data.GetValue(0);
+			ReadOnlyMemory<byte> firstEncryptionRequest = data.GetValue(1);
+			for (int i = 2; firstEncryptionRequest.TryGetValue(i, out var tag); i++)
 			{
-				return PolicyDecision.Deny("Time lock preventing decryption");
+				this.DataTags.Add(Encoding.UTF8.GetString(tag.Span));
 			}
-			
+		}
+		else
+		{
+			var firstDecryptionRequest = data.GetValue(0);
+			for (int i = 3; firstDecryptionRequest.TryGetValue(i, out var tag); i++)
+			{
+				this.DataTags.Add(Encoding.UTF8.GetString(tag.Span));
+			}
+		}
+
+		// Enforce Time Lock from tags if decryption request
+		if(!isEncryptionRequest)
+		{
+			foreach(var tag in DataTags)
+			{
+				if(tag.StartsWith("DecryptTimeLock:"))
+				{
+					var val = tag.Substring("DecryptTimeLock:".Length);
+					if(int.TryParse(val, out int lockEpoch))
+					{
+						var currentTime = (int)Utils.GetEpochSeconds();
+						if(currentTime < lockEpoch)
+						{
+							return PolicyDecision.Deny("Time lock preventing decryption until " + lockEpoch);
+						}
+					}
+				}
+			}
 		}
 
         return PolicyDecision.Allow();
