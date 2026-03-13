@@ -153,9 +153,16 @@ approve_and_commit() {
   TYPE=$1
   log "Processing ${TYPE} change-sets..."
   TOKEN="$(get_admin_token)"
-  curl -s -X GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/change-set/${TYPE}/requests" \
-       -H "Authorization: Bearer ${TOKEN}" \
-    | jq -c '.[]' | while read -r req; do
+  CHANGE_SETS=$(curl -s -X GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/change-set/${TYPE}/requests" \
+       -H "Authorization: Bearer ${TOKEN}")
+
+  # Skip if response is not an array (e.g. error object or empty)
+  if ! echo "${CHANGE_SETS}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    warn "No ${TYPE} change-sets found (or unexpected response). Skipping."
+    return 0
+  fi
+
+  echo "${CHANGE_SETS}" | jq -c '.[]' | while read -r req; do
         id=$(echo "${req}" | jq -r .draftRecordId)
         cst=$(echo "${req}" | jq -r .changeSetType)
         at=$(echo "${req}" | jq -r .actionType)
@@ -232,12 +239,13 @@ MAX_TRIES=3
 attempt=1
 while true; do
   log "Checking link status (attempt ${attempt}/${MAX_TRIES})..."
+  TOKEN="$(get_admin_token)"
   ATTRS=$(curl -s -X GET \
     "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users?username=admin" \
     -H "Authorization: Bearer ${TOKEN}")
 
-  KEY=$(echo "${ATTRS}" | jq -r '.[0].attributes.tideUserKey[0] // empty')
-  VUID=$(echo "${ATTRS}" | jq -r '.[0].attributes.vuid[0]        // empty')
+  KEY=$(echo "${ATTRS}" | jq -r '.[0].attributes.tideUserKey[0] // empty' 2>/dev/null || true)
+  VUID=$(echo "${ATTRS}" | jq -r '.[0].attributes.vuid[0]        // empty' 2>/dev/null || true)
 
   if [ -n "${KEY}" ] && [ -n "${VUID}" ]; then
     ok "Linked!"
