@@ -123,7 +123,7 @@ TIDECLOAK_LOCAL_URL=http://localhost:<port> bash init/tcinit.sh
 
 ### Start over
 
-Stop `npm run dev` first. Then run this from `template-ts-app` and start again from step 1 (or from "Running on another port"):
+Stop `npm run dev` first. Then run this from `template-ts-app` and start again from step 1 (or from "Running on another port"). The `sudo` on the first two lines is only needed if your Docker needs it and if the two `keycloakdb` files are root-owned; drop it otherwise.
 
 ```bash
 sudo docker rm -f mytidecloak
@@ -131,7 +131,7 @@ sudo rm -f keycloakdb.mv.db keycloakdb.trace.db
 rm -rf db data/admin-policy.b64 && git checkout -- data/tidecloak.json
 ```
 
-`sudo` is only needed on `docker rm` if your Docker needs it, and on the two `keycloakdb` files only if they are root-owned. The same `docker rm -f mytidecloak` applies if you started the container by hand on another port. `data/tidecloak.json` is tracked in git, so it is restored rather than deleted.
+The same `docker rm -f mytidecloak` applies if you started the container by hand on another port. `data/tidecloak.json` is tracked in git, so it is restored rather than deleted.
 
 ## The Default Contract
 
