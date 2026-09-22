@@ -1,11 +1,10 @@
-import { getAuthServerUrl, getRealm, getResource, getVendorId, initTcData } from "./tidecloakConfig";
+import { getAuthServerUrl, getRealm, getResource, getVendorId } from "./tidecloakConfig";
 import { Models } from "@tideorg/js";
 const Policy = Models.Policy;
 type Policy = InstanceType<typeof Policy>;
 import { base64ToBytes } from "./tideSerialization";
 
 const getTcUrl = () => `${getAuthServerUrl()}/admin/realms/${getRealm()}`;
-const getNonAdminTcUrl = () => `${getAuthServerUrl()}/realms/${getRealm()}`;
 
 export interface ChangeSetRequest {
     changeSetId: string;
@@ -27,7 +26,8 @@ export const getAdminPolicy = async (): Promise<Policy> => {
     try {
         b64 = fs.readFileSync(filePath, "utf-8").trim();
     } catch {
-        throw new Error(`Admin policy snapshot not found at ${filePath}. Run "npm run init" (or re-run the export after adding admins).`);
+        console.error(`Admin policy snapshot not found at ${filePath}`);
+        throw new Error(`Admin policy snapshot not found (data/admin-policy.b64). Run "npm run init", or "EXPORT_ONLY=1 bash init/tcinit.sh" to refresh it.`);
     }
     return Policy.from(base64ToBytes(b64));
 };

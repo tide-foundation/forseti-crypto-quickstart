@@ -75,7 +75,13 @@ This will:
 
 **Important:** When the invite link appears, open it in your browser to link the admin account. The script waits until the account is linked, then finishes provisioning.
 
-The admin policy snapshot is what the app attaches to every Forseti policy it commits. If you add more admins later, or the admin policy is regenerated, re-run the init script's export so the snapshot matches the realm.
+The admin policy snapshot is what the app attaches to every Forseti policy it commits. If you add more admins later, or the admin policy is regenerated, refresh both data files without touching the realm or the container:
+
+```bash
+EXPORT_ONLY=1 bash init/tcinit.sh
+```
+
+(`npm run init` would try to start a new container, so call the script directly here.)
 
 To start over, remove the container and its data first. The init script refuses to run against an existing realm:
 

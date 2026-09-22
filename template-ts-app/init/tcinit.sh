@@ -6,7 +6,8 @@ set -euo pipefail
 # iga-core change-request API. Writes data/tidecloak.json (adapter config)
 # and data/admin-policy.b64 (signed admin policy snapshot).
 #
-# Run from anywhere:  bash init/tcinit.sh
+# Run from anywhere:            bash init/tcinit.sh
+# Refresh the two data files:   EXPORT_ONLY=1 bash init/tcinit.sh
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd -P)"
@@ -22,6 +23,8 @@ log()  { printf "${CYAN}[tidecloak]${NC} %s\n" "$1"; }
 ok()   { printf "${GREEN}[tidecloak]${NC} %s\n" "$1"; }
 warn() { printf "${YELLOW}[tidecloak]${NC} %s\n" "$1"; }
 err()  { printf "${RED}[tidecloak]${NC} %s\n" "$1" >&2; }
+
+RESET_HINT="To start over: sudo docker rm -f mytidecloak; sudo rm -f keycloakdb.mv.db keycloakdb.trace.db; rm -rf db data/tidecloak.json data/admin-policy.b64 (see README)."
 
 # --- Load defaults from .env.example (project root first, then init/) -------
 # Values already set in the environment win. The file is parsed, not sourced,
@@ -66,9 +69,26 @@ CLIENT_NAME="${CLIENT_NAME:-myclient}"
 ADAPTER_OUTPUT_PATH="${ADAPTER_OUTPUT_PATH:-${PROJECT_ROOT}/data/tidecloak.json}"
 ADMIN_POLICY_OUTPUT_PATH="${ADMIN_POLICY_OUTPUT_PATH:-${PROJECT_ROOT}/data/admin-policy.b64}"
 MARKER_DIR="${SCRIPT_DIR}"
+EXPORT_ONLY="${EXPORT_ONLY:-0}"
+
+# --- Input validation -------------------------------------------------------
+# These end up in URL paths and in sed patterns, so keep them simple.
+NAME_RE='^[A-Za-z0-9._-]+$'
+URL_RE='^https?://[^/[:space:]|&\\]+$'
+for _v in NEW_REALM_NAME CLIENT_NAME ADMIN_ROLE_NAME REALM_MGMT_CLIENT_ID; do
+  if [[ ! "${!_v}" =~ $NAME_RE ]]; then
+    err "${_v}='${!_v}' may only contain letters, digits, '.', '_' and '-'."
+    exit 1
+  fi
+done
+unset _v
+if [[ ! "${CLIENT_APP_URL}" =~ $URL_RE ]]; then
+  err "CLIENT_APP_URL='${CLIENT_APP_URL}' must be an origin like http://localhost:3000 (no path, no trailing slash)."
+  exit 1
+fi
 
 # --- Prompt for license email + terms (skipped when SUBSCRIPTION_EMAIL is set)
-if [[ -z "${SUBSCRIPTION_EMAIL:-}" ]]; then
+if [[ "${EXPORT_ONLY}" != "1" && -z "${SUBSCRIPTION_EMAIL:-}" ]]; then
   if [[ ! -t 0 ]]; then
     err "SUBSCRIPTION_EMAIL is not set and stdin is not a terminal. Set SUBSCRIPTION_EMAIL and re-run."
     exit 1
@@ -106,14 +126,14 @@ for p in "${CANDIDATES[@]}"; do
   if [[ -f "$p" ]]; then REALM_JSON_PATH="$p"; break; fi
 done
 
-if [[ -z "${REALM_JSON_PATH}" ]]; then
+if [[ "${EXPORT_ONLY}" != "1" && -z "${REALM_JSON_PATH}" ]]; then
   err "Could not find realm.json in:"
   for p in "${CANDIDATES[@]}"; do echo "   - $p" >&2; done
   echo "   Put realm.json next to the script (${SCRIPT_DIR}/realm.json)" >&2
   echo "   OR run with: REALM_JSON_PATH=/abs/path/realm.json bash init/tcinit.sh" >&2
   exit 1
 fi
-log "Using realm.json: ${REALM_JSON_PATH}"
+[[ "${EXPORT_ONLY}" != "1" ]] && log "Using realm.json: ${REALM_JSON_PATH}"
 
 # --- Dependency checks ------------------------------------------------------
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { err "Missing dependency: $1"; exit 1; }; }
@@ -140,6 +160,7 @@ cleanup() {
     err "WARNING: realm '${REALM_NAME:-?}' may be left in an incomplete firstAdmin"
     err "         state (IGA enabled, admin not yet granted/flipped)."
     err "         Complete provisioning or delete the realm before use."
+    err "         ${RESET_HINT}"
   fi
 }
 trap cleanup EXIT
@@ -157,13 +178,23 @@ esac
 
 # --- Helper: fresh master admin-cli token -----------------------------------
 get_admin_token() {
-  curl -s -X POST "${TIDECLOAK_LOCAL_URL}/realms/master/protocol/openid-connect/token" \
+  local body
+  body=$(curl -s --max-time 30 -X POST "${TIDECLOAK_LOCAL_URL}/realms/master/protocol/openid-connect/token" \
        -H "Content-Type: application/x-www-form-urlencoded" \
-       -d "username=${KC_USER}" \
-       -d "password=${KC_PASSWORD}" \
-       -d "grant_type=password" \
-       -d "client_id=admin-cli" \
-    | jq -r .access_token
+       --data-urlencode "username=${KC_USER}" \
+       --data-urlencode "password=${KC_PASSWORD}" \
+       --data-urlencode "grant_type=password" \
+       --data-urlencode "client_id=admin-cli") || return 1
+  jq -r '.access_token // empty' <<< "${body}" 2>/dev/null || return 1
+}
+
+# Sets TOKEN or exits. Use this instead of calling get_admin_token directly.
+token_or_die() {
+  TOKEN="$(get_admin_token)" || TOKEN=""
+  if [[ -z "${TOKEN}" ]]; then
+    err "Admin token request failed. Check KC_USER/KC_PASSWORD and TIDECLOAK_LOCAL_URL (${TIDECLOAK_LOCAL_URL})."
+    exit 1
+  fi
 }
 
 # --- Helper: status-capturing admin API call --------------------------------
@@ -172,6 +203,7 @@ get_admin_token() {
 # inside $(...), or the globals are lost. Adds the bearer header itself.
 RESP_CODE=""
 RESP_BODY=""
+TOKEN=""
 api() {
   local method="$1" url="$2"; shift 2
   local tmp
@@ -182,39 +214,60 @@ api() {
   rm -f "${tmp}"
 }
 
+# Fails with the body unless the last api call returned 2xx.
+require_2xx() {
+  local what="$1"
+  if [[ "${RESP_CODE}" != 2* ]]; then
+    err "${what} failed (HTTP ${RESP_CODE})."
+    err "Response: ${RESP_BODY}"
+    exit 1
+  fi
+}
+
 # --- Drain PENDING IGA change-requests --------------------------------------
 # /approve records and auto-commits at threshold 1. Loop until the inbox is
-# empty because approving one CR unblocks its dependents.
+# empty because approving one CR unblocks its dependents. Only 401 is a
+# credential error; 403 shows up once the realm has flipped to multiAdmin
+# and later approvals need the enclave, so it is reported and skipped.
 drain_change_requests() {
   local label="${1:-}" rounds=0
   log "Draining PENDING change-requests ${label}..."
   while (( rounds < 12 )); do
-    TOKEN="$(get_admin_token)"
-    local list_tmp list_code
+    token_or_die
+    local list_tmp list_code list_body
     list_tmp="$(mktemp)"
     list_code=$(curl -s -o "${list_tmp}" -w "%{http_code}" \
       "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/iga/change-requests?status=PENDING" \
       -H "Authorization: Bearer ${TOKEN}" -H "Cache-Control: no-store") || list_code="000"
-    if [[ "${list_code}" == "401" || "${list_code}" == "403" ]]; then
-      rm -f "${list_tmp}"
-      err "FATAL: change-request LIST returned HTTP ${list_code} ${label}. Admin authentication/authorization failed."
-      err "       Check KC_USER/KC_PASSWORD and admin privileges."
+    list_body="$(cat "${list_tmp}")"
+    rm -f "${list_tmp}"
+    if [[ "${list_code}" == "401" ]]; then
+      err "FATAL: change-request LIST returned HTTP 401 ${label}. Check KC_USER/KC_PASSWORD."
       exit 1
     fi
-    ids=$(jq -r '.[].id // empty' < "${list_tmp}")
-    rm -f "${list_tmp}"
+    if [[ "${list_code}" != 2* ]]; then
+      err "FATAL: change-request LIST returned HTTP ${list_code} ${label}."
+      err "Response: ${list_body}"
+      exit 1
+    fi
+    ids=$(jq -r 'if type == "array" then .[].id // empty else empty end' <<< "${list_body}" 2>/dev/null || true)
     if [[ -z "${ids}" ]]; then ok "  inbox empty ${label}"; return 0; fi
     while IFS= read -r id; do
       [[ -z "$id" ]] && continue
-      st=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+      local ap_tmp ap_body
+      ap_tmp="$(mktemp)"
+      st=$(curl -s -o "${ap_tmp}" -w "%{http_code}" -X POST \
         "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/iga/change-requests/${id}/approve" \
-        -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d '{}')
+        -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d '{}') || st="000"
+      ap_body="$(cat "${ap_tmp}")"
+      rm -f "${ap_tmp}"
       case "$st" in
         2*) : ;;
-        401|403)
-          err "FATAL: change-request approve ${id} returned HTTP ${st} ${label}. Admin authentication/authorization failed."
+        401)
+          err "FATAL: change-request approve ${id} returned HTTP 401 ${label}. Check KC_USER/KC_PASSWORD."
           exit 1 ;;
-        404|409|412) : ;;
+        403|404|409|412)
+          warn "  approve ${id} -> ${st} $(jq -r '.error // empty' <<< "${ap_body}" 2>/dev/null || true)" ;;
         *) warn "  approve ${id} -> ${st}" ;;
       esac
     done <<< "${ids}"
@@ -223,12 +276,17 @@ drain_change_requests() {
   warn "  drain hit round cap ${label}"; return 0
 }
 
+REALM_NAME="${NEW_REALM_NAME}"
+mkdir -p "$(dirname "${ADAPTER_OUTPUT_PATH}")" "$(dirname "${ADMIN_POLICY_OUTPUT_PATH}")"
+
+if [[ "${EXPORT_ONLY}" == "1" ]]; then
+  log "EXPORT_ONLY=1: skipping provisioning, refreshing data files for realm '${REALM_NAME}'."
+else
+
 # ============================================================================
 #  Step 1: prepare realm JSON + create the realm
 # ============================================================================
-REALM_NAME="${NEW_REALM_NAME}"
 echo "${REALM_NAME}" > "${MARKER_DIR}/.realm_name"
-mkdir -p "${PROJECT_ROOT}/data"
 
 TMP_REALM_JSON="$(mktemp)"
 cp "${REALM_JSON_PATH}" "${TMP_REALM_JSON}"
@@ -238,7 +296,7 @@ sed "${SED_INPLACE[@]}" "s|forseti-test|${REALM_NAME}|g"              "${TMP_REA
 sed "${SED_INPLACE[@]}" "s|myclient|${CLIENT_NAME}|g"                 "${TMP_REALM_JSON}"
 
 log "Creating realm '${REALM_NAME}'..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api POST "${TIDECLOAK_LOCAL_URL}/admin/realms" \
   -H "Content-Type: application/json" \
   --data-binary @"${TMP_REALM_JSON}"
@@ -251,7 +309,8 @@ elif [[ "${code}" == "409" ]]; then
     warn "The drain step approves ALL pending change-requests in this realm."
   else
     err "Realm '${REALM_NAME}' already exists. This script provisions FRESH realms."
-    err "Remove the container and its data, or set ALLOW_EXISTING_REALM=1 to override."
+    err "Set ALLOW_EXISTING_REALM=1 to override, or EXPORT_ONLY=1 to only refresh the data files."
+    err "${RESET_HINT}"
     exit 1
   fi
 else
@@ -264,87 +323,76 @@ fi
 #  Step 2: setUpTideRealm (VRK keygen on the Tide network, needs healthy ORKs)
 # ============================================================================
 log "Setting up Tide realm (VRK keygen on the Tide network)..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/vendorResources/setUpTideRealm" \
   --max-time 300 \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data-urlencode "email=${SUBSCRIPTION_EMAIL}" \
   --data-urlencode "isRagnarokEnabled=true" \
   --data-urlencode "skipLicense=false"
-code="${RESP_CODE}"
-if [[ "${code}" != 2* ]]; then
-  err "setUpTideRealm failed (HTTP ${code})."
+if [[ "${RESP_CODE}" != 2* ]]; then
+  err "setUpTideRealm failed (HTTP ${RESP_CODE})."
   err "Check that the ORKs are reachable and the license email is valid."
   err "Response: ${RESP_BODY}"
   exit 1
 fi
-ok "  setUpTideRealm -> ${code}"
+ok "  setUpTideRealm -> ${RESP_CODE}"
 
 # ============================================================================
 #  Step 3: stamp iga.attestor=tide on the realm before enabling IGA
 # ============================================================================
 log "Stamping iga.attestor=tide on the realm..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}"
-code="${RESP_CODE}"
-if [[ "${code}" != 2* ]]; then
-  err "Could not fetch realm representation (HTTP ${code})."
-  err "Response: ${RESP_BODY}"
-  exit 1
-fi
+require_2xx "Fetching the realm representation"
 REALM_REP_FILE="$(mktemp)"
 jq '.attributes = ((.attributes // {}) + {"iga.attestor":"tide"})' <<< "${RESP_BODY}" > "${REALM_REP_FILE}"
-TOKEN="$(get_admin_token)"
+token_or_die
 api PUT "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}" \
   -H "Content-Type: application/json" \
   --data-binary @"${REALM_REP_FILE}"
-code="${RESP_CODE}"
 rm -f "${REALM_REP_FILE}"
-if [[ "${code}" != 2* ]]; then
-  err "Failed to set iga.attestor=tide (HTTP ${code})."
-  err "Response: ${RESP_BODY}"
-  exit 1
-fi
-ok "  iga.attestor=tide -> ${code}"
+require_2xx "Setting iga.attestor=tide"
+ok "  iga.attestor=tide -> ${RESP_CODE}"
 
 # ============================================================================
 #  Step 4: check IGA status, then enable it if needed
 #  toggle-iga is a pure flip, so never call it on an already-enabled realm.
 # ============================================================================
+iga_status_enabled() {
+  token_or_die
+  api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/iga-status"
+  require_2xx "iga-status"
+  if ! jq -e 'has("enabled")' <<< "${RESP_BODY}" >/dev/null 2>&1; then
+    err "iga-status response has no 'enabled' field; refusing to guess."
+    err "Response: ${RESP_BODY}"
+    exit 1
+  fi
+  IGA_ENABLED="$(jq -r '.enabled' <<< "${RESP_BODY}")"
+}
+
 log "Checking IGA status..."
-TOKEN="$(get_admin_token)"
-api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/iga-status"
-code="${RESP_CODE}"
-if [[ "${code}" != 2* ]]; then
-  err "iga-status failed (HTTP ${code})."
-  err "Response: ${RESP_BODY}"
-  exit 1
-fi
-IGA_ENABLED="$(jq -r '.enabled // false' <<< "${RESP_BODY}")"
+iga_status_enabled
 
 if [[ "${IGA_ENABLED}" == "true" ]]; then
   warn "  IGA already enabled; skipping toggle."
 else
   log "Enabling IGA governance (this runs an ORK ceremony and can take a while)..."
-  TOKEN="$(get_admin_token)"
+  token_or_die
   api POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/toggle-iga" \
     --max-time 300 \
     -H "Content-Type: application/x-www-form-urlencoded" \
     --data-urlencode "isIGAEnabled=true"
+  require_2xx "toggle-iga"
   code="${RESP_CODE}"
-  if [[ "${code}" != 2* ]]; then
-    err "toggle-iga failed (HTTP ${code})."
-    err "Response: ${RESP_BODY}"
-    exit 1
-  fi
 
   # Inspect the body. A failed ORK ceremony can still come back as 200.
-  TOGGLE_ENABLED="$(jq -r '.enabled // false' <<< "${RESP_BODY}")"
-  TOGGLE_WARNINGS="$(jq -c '.warnings // null' <<< "${RESP_BODY}")"
-  TOGGLE_WARNING="$(jq -r '.warning // empty' <<< "${RESP_BODY}")"
-  TOGGLE_RAN="$(jq -r '.autoCommit.ran // false' <<< "${RESP_BODY}")"
-  TOGGLE_REJECTED="$(jq -r '.autoCommit.rejected // 0' <<< "${RESP_BODY}")"
-  TOGGLE_SKIP="$(jq -r '.autoCommit.skipReason // empty' <<< "${RESP_BODY}")"
+  TOGGLE_ENABLED="$(jq -r '.enabled // false' <<< "${RESP_BODY}" 2>/dev/null || echo false)"
+  TOGGLE_WARNINGS="$(jq -c '.warnings // null' <<< "${RESP_BODY}" 2>/dev/null || echo bad)"
+  TOGGLE_WARNING="$(jq -r '.warning // empty' <<< "${RESP_BODY}" 2>/dev/null || true)"
+  TOGGLE_RAN="$(jq -r '.autoCommit.ran // false' <<< "${RESP_BODY}" 2>/dev/null || echo false)"
+  TOGGLE_REJECTED="$(jq -r '.autoCommit.rejected // 0' <<< "${RESP_BODY}" 2>/dev/null || echo bad)"
+  TOGGLE_SKIP="$(jq -r '.autoCommit.skipReason // empty' <<< "${RESP_BODY}" 2>/dev/null || true)"
 
   [[ -n "${TOGGLE_WARNING}" ]] && warn "  toggle-iga warning: ${TOGGLE_WARNING}"
   [[ -n "${TOGGLE_SKIP}" ]] && warn "  toggle-iga autoCommit skipReason: ${TOGGLE_SKIP}"
@@ -353,16 +401,15 @@ else
         || "${TOGGLE_RAN}" != "true" || "${TOGGLE_REJECTED}" != "0" ]]; then
     err "toggle-iga returned HTTP ${code} but the result is not clean."
     err "  enabled=${TOGGLE_ENABLED} autoCommit.ran=${TOGGLE_RAN} autoCommit.rejected=${TOGGLE_REJECTED}"
-    err "  warningsSummary: $(jq -r '.warningsSummary // "none"' <<< "${RESP_BODY}")"
+    err "  warningsSummary: $(jq -r '.warningsSummary // "none"' <<< "${RESP_BODY}" 2>/dev/null || echo unreadable)"
     err "  Response: ${RESP_BODY}"
     exit 1
   fi
   ok "  toggle-iga -> ${code} (IGA enabled)"
 
-  TOKEN="$(get_admin_token)"
-  api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tide-admin/iga-status"
-  if [[ "${RESP_CODE}" != 2* || "$(jq -r '.enabled // false' <<< "${RESP_BODY}")" != "true" ]]; then
-    err "IGA does not report enabled after toggle (HTTP ${RESP_CODE})."
+  iga_status_enabled
+  if [[ "${IGA_ENABLED}" != "true" ]]; then
+    err "IGA does not report enabled after toggle."
     err "Response: ${RESP_BODY}"
     exit 1
   fi
@@ -380,7 +427,7 @@ drain_change_requests "(after IGA enable)"
 #  Step 6: create the admin user (tideInvitable so it can be invited later)
 # ============================================================================
 log "Creating admin user..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users" \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","email":"admin@tidecloak.com","firstName":"Admin","lastName":"User","enabled":true,"emailVerified":false,"attributes":{"tideInvitable":["true"]}}'
@@ -406,12 +453,12 @@ drain_change_requests "(after user create)"
 #  Step 8: resolve the admin userId (non-empty proves the create committed)
 # ============================================================================
 log "Resolving admin userId..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users?username=admin&exact=true"
-code="${RESP_CODE}"
-USER_ID="$(jq -r '.[0].id // empty' <<< "${RESP_BODY}")"
+require_2xx "Looking up the admin user"
+USER_ID="$(jq -r '.[0].id // empty' <<< "${RESP_BODY}" 2>/dev/null || true)"
 if [[ -z "${USER_ID}" ]]; then
-  err "Could not resolve admin userId (HTTP ${code}); the CREATE_USER change-request may not have committed."
+  err "Could not resolve admin userId; the CREATE_USER change-request may not have committed."
   err "Response: ${RESP_BODY}"
   exit 1
 fi
@@ -421,18 +468,17 @@ ok "  admin userId = ${USER_ID}"
 #  Step 9: mint the Tide enrollment link
 # ============================================================================
 log "Generating invite link..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/tideAdminResources/get-required-action-link?userId=${USER_ID}&lifespan=43200" \
   -H "Content-Type: application/json" \
   -H "Accept: text/plain" \
   -d '["link-tide-account-action"]'
-code="${RESP_CODE}"
-if [[ "${code}" != 2* ]]; then
-  err "Failed to mint enrollment link (HTTP ${code})."
-  err "Response: ${RESP_BODY}"
+require_2xx "Minting the enrollment link"
+INVITE_LINK="${RESP_BODY}"
+if [[ -z "${INVITE_LINK}" ]]; then
+  err "Enrollment link response was empty (HTTP ${RESP_CODE})."
   exit 1
 fi
-INVITE_LINK="${RESP_BODY}"
 
 # ============================================================================
 #  Step 10: wait for the human to enroll in the Tide enclave
@@ -452,11 +498,11 @@ poll_attempt=0
 POLL_MAX=100000
 while true; do
   poll_attempt=$(( poll_attempt + 1 ))
-  TOKEN="$(get_admin_token)"
-  ATTRS=$(curl -s "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users?username=admin&exact=true&briefRepresentation=false" \
-    -H "Authorization: Bearer ${TOKEN}" -H "Cache-Control: no-store")
-  KEY=$(jq -r '.[0].attributes.tideUserKey[0] // empty' <<< "${ATTRS}")
-  VUID=$(jq -r '.[0].attributes.vuid[0]        // empty' <<< "${ATTRS}")
+  token_or_die
+  ATTRS=$(curl -s --max-time 30 "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users?username=admin&exact=true&briefRepresentation=false" \
+    -H "Authorization: Bearer ${TOKEN}" -H "Cache-Control: no-store") || ATTRS=""
+  KEY=$(jq -r '.[0].attributes.tideUserKey[0] // empty' <<< "${ATTRS}" 2>/dev/null || true)
+  VUID=$(jq -r '.[0].attributes.vuid[0]        // empty' <<< "${ATTRS}" 2>/dev/null || true)
   if [[ -n "${KEY}" && -n "${VUID}" ]]; then
     ok "  Tide enrollment detected (tideUserKey + vuid present)."
     break
@@ -478,69 +524,54 @@ drain_change_requests "(after enrollment)"
 #  Step 12: point the tide IdP at the app origin, then sign the settings
 # ============================================================================
 log "Signing tide IdP settings (CustomAdminUIDomain -> ${CLIENT_APP_URL})..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/tide"
-code="${RESP_CODE}"
-if [[ "${code}" != 2* ]]; then
-  err "Could not fetch tide IdP instance (HTTP ${code})."
-  err "Response: ${RESP_BODY}"
-  exit 1
-fi
+require_2xx "Fetching the tide IdP instance"
 IDP_REP_FILE="$(mktemp)"
 jq --arg d "${CLIENT_APP_URL}" '.config.CustomAdminUIDomain = $d' <<< "${RESP_BODY}" > "${IDP_REP_FILE}"
-TOKEN="$(get_admin_token)"
+token_or_die
 api PUT "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/tide" \
   -H "Content-Type: application/json" \
   --data-binary @"${IDP_REP_FILE}"
-code="${RESP_CODE}"
 rm -f "${IDP_REP_FILE}"
-if [[ "${code}" != 2* ]]; then
-  err "Failed to update tide IdP settings (HTTP ${code})."
-  err "Response: ${RESP_BODY}"
-  exit 1
-fi
-TOKEN="$(get_admin_token)"
+require_2xx "Updating the tide IdP settings"
+token_or_die
 api POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/vendorResources/sign-idp-settings" \
   -H "Content-Type: text/plain" \
   --data-binary ""
-code="${RESP_CODE}"
-if [[ "${code}" != 2* ]]; then
-  err "sign-idp-settings failed (HTTP ${code}). Needs healthy ORKs."
+if [[ "${RESP_CODE}" != 2* ]]; then
+  err "sign-idp-settings failed (HTTP ${RESP_CODE}). Needs healthy ORKs."
   err "Response: ${RESP_BODY}"
   exit 1
 fi
-ok "  IdP settings signed -> ${code}"
+ok "  IdP settings signed -> ${RESP_CODE}"
 
 # ============================================================================
 #  Step 13: grant tide-realm-admin to the enrolled admin (last governed write)
 # ============================================================================
 log "Granting ${ADMIN_ROLE_NAME} to the admin user..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/clients?clientId=${REALM_MGMT_CLIENT_ID}"
-code="${RESP_CODE}"
-RM_UUID="$(jq -r '.[0].id // empty' <<< "${RESP_BODY}")"
+require_2xx "Looking up the ${REALM_MGMT_CLIENT_ID} client"
+RM_UUID="$(jq -r '.[0].id // empty' <<< "${RESP_BODY}" 2>/dev/null || true)"
 if [[ -z "${RM_UUID}" ]]; then
-  err "Could not resolve ${REALM_MGMT_CLIENT_ID} client uuid (HTTP ${code})."
-  exit 1
-fi
-TOKEN="$(get_admin_token)"
-api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/clients/${RM_UUID}/roles/${ADMIN_ROLE_NAME}"
-code="${RESP_CODE}"
-if [[ "${code}" != 2* ]]; then
-  err "Could not fetch ${ADMIN_ROLE_NAME} role (HTTP ${code})."
+  err "Could not resolve ${REALM_MGMT_CLIENT_ID} client uuid."
   err "Response: ${RESP_BODY}"
   exit 1
 fi
+token_or_die
+api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/clients/${RM_UUID}/roles/${ADMIN_ROLE_NAME}"
+require_2xx "Fetching the ${ADMIN_ROLE_NAME} role"
 ROLE_REP="${RESP_BODY}"
 
-TOKEN="$(get_admin_token)"
+token_or_die
 api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users/${USER_ID}/role-mappings/clients/${RM_UUID}"
-code="${RESP_CODE}"
-ALREADY=$(jq -r --arg r "${ADMIN_ROLE_NAME}" '[.[]?.name] | index($r) // empty' <<< "${RESP_BODY}")
+require_2xx "Reading the admin's ${REALM_MGMT_CLIENT_ID} role mappings"
+ALREADY=$(jq -r --arg r "${ADMIN_ROLE_NAME}" '[.[]?.name] | index($r) // empty' <<< "${RESP_BODY}" 2>/dev/null || true)
 if [[ -n "${ALREADY}" ]]; then
   warn "  ${ADMIN_ROLE_NAME} already mapped; skipping grant."
 else
-  TOKEN="$(get_admin_token)"
+  token_or_die
   api POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users/${USER_ID}/role-mappings/clients/${RM_UUID}" \
     -H "Content-Type: application/json" \
     -d "[${ROLE_REP}]"
@@ -551,7 +582,7 @@ else
     409)
       warn "  grant -> 409; draining then retrying once..."
       drain_change_requests "(grant 409 retry)"
-      TOKEN="$(get_admin_token)"
+      token_or_die
       api POST "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/users/${USER_ID}/role-mappings/clients/${RM_UUID}" \
         -H "Content-Type: application/json" \
         -d "[${ROLE_REP}]"
@@ -572,35 +603,32 @@ fi
 drain_change_requests "(final: grant + firstAdmin->multiAdmin flip)"
 INCOMPLETE_FIRSTADMIN=0
 
-TOKEN="$(get_admin_token)"
+token_or_die
 api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/iga/change-requests?status=PENDING" \
   -H "Cache-Control: no-store"
 if [[ "${RESP_CODE}" == 2* ]]; then
-  LEFTOVER="$(jq -r '.[]? | "\(.id) \(.actionType // "?")"' <<< "${RESP_BODY}")"
+  LEFTOVER="$(jq -r 'if type == "array" then .[] | "\(.id) \(.actionType // "?")" else empty end' <<< "${RESP_BODY}" 2>/dev/null || true)"
   if [[ -n "${LEFTOVER}" ]]; then
     warn "Change-requests still PENDING after the final drain (approve them in the admin console):"
     while IFS= read -r line; do warn "  ${line}"; done <<< "${LEFTOVER}"
   fi
 fi
 
+fi # end of provisioning (skipped when EXPORT_ONLY=1)
+
 # ============================================================================
 #  Step 15: export the signed admin policy snapshot
 #  The app attaches this to every Forseti policy request it commits.
 # ============================================================================
 log "Exporting admin policy snapshot..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/iga/role-policies/name/${ADMIN_ROLE_NAME}" \
   --max-time 60 -H "Cache-Control: no-store"
-code="${RESP_CODE}"
-if [[ "${code}" != 2* ]]; then
-  err "Could not fetch the ${ADMIN_ROLE_NAME} policy (HTTP ${code})."
-  err "Response: ${RESP_BODY}"
-  exit 1
-fi
-POLICY_B64="$(jq -r '.policy // empty' <<< "${RESP_BODY}")"
-POLICY_SIG="$(jq -r '.policySig // empty' <<< "${RESP_BODY}")"
-POLICY_CONTRACT="$(jq -r '.contractId // "?"' <<< "${RESP_BODY}")"
-POLICY_THRESHOLD="$(jq -r '.threshold // "?"' <<< "${RESP_BODY}")"
+require_2xx "Fetching the ${ADMIN_ROLE_NAME} policy"
+POLICY_B64="$(jq -r '.policy // empty' <<< "${RESP_BODY}" 2>/dev/null || true)"
+POLICY_SIG="$(jq -r '.policySig // empty' <<< "${RESP_BODY}" 2>/dev/null || true)"
+POLICY_CONTRACT="$(jq -r '.contractId // "?"' <<< "${RESP_BODY}" 2>/dev/null || echo "?")"
+POLICY_THRESHOLD="$(jq -r '.threshold // "?"' <<< "${RESP_BODY}" 2>/dev/null || echo "?")"
 
 if [[ -z "${POLICY_B64}" ]]; then
   err "The ${ADMIN_ROLE_NAME} policy record has no policy bytes."
@@ -622,35 +650,43 @@ ok "  admin policy saved to ${ADMIN_POLICY_OUTPUT_PATH} (contractId=${POLICY_CON
 
 # ============================================================================
 #  Step 16: fetch the client adapter config (tidecloak.json)
+#  Written to a temp file first so a bad response never clobbers a good one.
 # ============================================================================
 log "Fetching adapter config..."
-TOKEN="$(get_admin_token)"
+token_or_die
 api GET "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_NAME}"
-code="${RESP_CODE}"
-CLIENT_UUID="$(jq -r '.[0].id // empty' <<< "${RESP_BODY}")"
+require_2xx "Looking up the '${CLIENT_NAME}' client"
+CLIENT_UUID="$(jq -r '.[0].id // empty' <<< "${RESP_BODY}" 2>/dev/null || true)"
 if [[ -z "${CLIENT_UUID}" ]]; then
-  err "Could not resolve client '${CLIENT_NAME}' uuid (HTTP ${code})."
+  err "Could not resolve client '${CLIENT_NAME}' uuid."
+  err "Response: ${RESP_BODY}"
   exit 1
 fi
-TOKEN="$(get_admin_token)"
-adapter_code=$(curl -s -o "${ADAPTER_OUTPUT_PATH}" -w "%{http_code}" \
+token_or_die
+ADAPTER_TMP="$(mktemp)"
+adapter_code=$(curl -s -o "${ADAPTER_TMP}" -w "%{http_code}" \
   "${TIDECLOAK_LOCAL_URL}/admin/realms/${REALM_NAME}/vendorResources/get-installations-provider?clientId=${CLIENT_UUID}&providerId=keycloak-oidc-keycloak-json" \
-  -H "Authorization: Bearer ${TOKEN}")
+  -H "Authorization: Bearer ${TOKEN}") || adapter_code="000"
 if [[ "${adapter_code}" != 2* ]]; then
   err "Failed to fetch adapter config (HTTP ${adapter_code})."
-  err "$(cat "${ADAPTER_OUTPUT_PATH}" 2>/dev/null)"
-  rm -f "${ADAPTER_OUTPUT_PATH}"
+  err "$(cat "${ADAPTER_TMP}" 2>/dev/null)"
+  rm -f "${ADAPTER_TMP}"
   exit 1
 fi
-
 if ! jq -e --arg o "client-origin-auth-${CLIENT_APP_URL}" \
-     '.vendorId and .homeOrkUrl and .jwk.keys[0].x and .[$o]' "${ADAPTER_OUTPUT_PATH}" >/dev/null 2>&1; then
+     '.vendorId and .homeOrkUrl and .jwk.keys[0].x and .[$o]' "${ADAPTER_TMP}" >/dev/null 2>&1; then
   err "Adapter config is missing vendorId, homeOrkUrl, jwk or client-origin-auth-${CLIENT_APP_URL}."
-  err "$(cat "${ADAPTER_OUTPUT_PATH}")"
+  err "$(cat "${ADAPTER_TMP}")"
+  rm -f "${ADAPTER_TMP}"
   exit 1
 fi
+mv -f "${ADAPTER_TMP}" "${ADAPTER_OUTPUT_PATH}"
 ok "  Adapter config saved to ${ADAPTER_OUTPUT_PATH}"
 
 echo ""
-ok "All done. Realm '${REALM_NAME}' is provisioned and the first admin is enrolled."
-ok "If you add admins later, re-run this export to refresh data/admin-policy.b64."
+if [[ "${EXPORT_ONLY}" == "1" ]]; then
+  ok "Data files refreshed for realm '${REALM_NAME}'."
+else
+  ok "All done. Realm '${REALM_NAME}' is provisioned and the first admin is enrolled."
+  ok "If you add admins later, refresh the snapshot with: EXPORT_ONLY=1 bash init/tcinit.sh"
+fi
