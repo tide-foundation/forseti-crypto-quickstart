@@ -44,7 +44,7 @@ Contracts can implement up to three validation methods:
 
 - [Docker](https://docs.docker.com/get-docker/)
 - [Node.js](https://nodejs.org/) >= 20.9.0
-- `curl` and `jq` (used by the init script)
+- `bash`, `curl` and `jq` (used by the init script)
 
 ## Getting Started
 
@@ -71,8 +71,19 @@ This will:
 - Create an admin user and generate an invite link
 - Prompt you for a license email and Terms & Conditions acceptance
 - Save the adapter config to `data/tidecloak.json`
+- Save the signed admin policy to `data/admin-policy.b64`
 
-**Important:** When the invite link appears, open it in your browser to link the admin account before continuing.
+**Important:** When the invite link appears, open it in your browser to link the admin account. The script waits until the account is linked, then finishes provisioning.
+
+The admin policy snapshot is what the app attaches to every Forseti policy it commits. If you add more admins later, or the admin policy is regenerated, re-run the init script's export so the snapshot matches the realm.
+
+To start over, remove the container and its data first. The init script refuses to run against an existing realm:
+
+```bash
+sudo docker rm -f mytidecloak
+sudo rm -f keycloakdb.mv.db keycloakdb.trace.db
+rm -rf db data/tidecloak.json data/admin-policy.b64
+```
 
 ### 2. Install Dependencies
 
@@ -136,5 +147,5 @@ template-ts-app/
   lib/
     forsetiContract.ts   Default Forseti C# contract
     database/            SQLite policy storage
-  data/              Generated adapter config (gitignored)
+  data/              Generated adapter config and admin policy snapshot
 ```

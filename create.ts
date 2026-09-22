@@ -160,7 +160,7 @@ async function main(): Promise<void> {
       console.log('Running tcinit.sh...')
       try {
         execSync(
-          `bash "${path.resolve(packageRoot, 'init', 'tcinit.sh')}"`,
+          `bash "${path.resolve(process.cwd(), targetDir, 'init', 'tcinit.sh')}"`,
           {
             cwd: path.resolve(process.cwd(), targetDir),
             stdio: 'inherit',
@@ -177,17 +177,6 @@ async function main(): Promise<void> {
           }
         )
         console.log('Initialization script completed successfully.')
-
-        // Move generated adapter config to data/ directory
-        const srcConfig = path.resolve(packageRoot, 'tidecloak.json')
-        const destConfig = path.resolve(process.cwd(), targetDir, 'data', 'tidecloak.json')
-        if (fs.existsSync(srcConfig)) {
-          fs.mkdirSync(path.dirname(destConfig), { recursive: true })
-          fs.copyFileSync(srcConfig, destConfig)
-          console.log(`Adapter config moved to "${targetDir}/data/tidecloak.json"`)
-        } else {
-          console.warn(`Adapter config not found at ${srcConfig}`)
-        }
       } catch (err: any) {
         console.error('Initialization script error:', err.message)
         console.log(`To retry: cd ${targetDir} && bash init/tcinit.sh`)

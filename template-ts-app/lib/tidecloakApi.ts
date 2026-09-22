@@ -13,15 +13,23 @@ export interface ChangeSetRequest {
     actionType: string;
 }
 
+// Reads the signed admin policy snapshot written by init/tcinit.sh.
+// Server-side only: this module is also bundled for the browser, so fs is
+// required lazily here rather than imported at the top.
 export const getAdminPolicy = async (): Promise<Policy> => {
-    await initTcData();
-    const url = `${getNonAdminTcUrl()}/tide-policy-resources/admin-policy`;
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Error fetching admin policy: ${await response.text()}`);
+    if (typeof window !== "undefined") {
+        throw new Error("getAdminPolicy is server-side only");
     }
-    const policy = Policy.from(base64ToBytes(await response.text()));
-    return policy;
+    const fs = require("fs");
+    const path = require("path");
+    const filePath = path.join(process.cwd(), "data", "admin-policy.b64");
+    let b64: string;
+    try {
+        b64 = fs.readFileSync(filePath, "utf-8").trim();
+    } catch {
+        throw new Error(`Admin policy snapshot not found at ${filePath}. Run "npm run init" (or re-run the export after adding admins).`);
+    }
+    return Policy.from(base64ToBytes(b64));
 };
 
 export const getVendorIdForPolicy = (): string => {
