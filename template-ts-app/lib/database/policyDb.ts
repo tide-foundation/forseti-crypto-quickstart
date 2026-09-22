@@ -5,7 +5,7 @@ const Policy = Models.Policy;
 type Policy = InstanceType<typeof Policy>;
 const GenericResourceAccessThresholdRoleContract = Contracts.GenericResourceAccessThresholdRoleContract;
 import { PolicySignRequest } from 'heimdall-tide';
-import { getAdminPolicy } from '../tidecloakApi';
+import { getAdminPolicy } from '../adminPolicy';
 
 export async function GetAllPendingPolicies() {
     const rows = db.prepare('SELECT * FROM pending_policy_requests')

@@ -1,28 +1,12 @@
-import { getAuthServerUrl, getRealm, getResource, getVendorId, initTcData } from "./tidecloakConfig";
-import { Models } from "@tideorg/js";
-const Policy = Models.Policy;
-type Policy = InstanceType<typeof Policy>;
-import { base64ToBytes } from "./tideSerialization";
+import { getAuthServerUrl, getRealm, getResource, getVendorId } from "./tidecloakConfig";
 
 const getTcUrl = () => `${getAuthServerUrl()}/admin/realms/${getRealm()}`;
-const getNonAdminTcUrl = () => `${getAuthServerUrl()}/realms/${getRealm()}`;
 
 export interface ChangeSetRequest {
     changeSetId: string;
     changeSetType: string;
     actionType: string;
 }
-
-export const getAdminPolicy = async (): Promise<Policy> => {
-    await initTcData();
-    const url = `${getNonAdminTcUrl()}/tide-policy-resources/admin-policy`;
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Error fetching admin policy: ${await response.text()}`);
-    }
-    const policy = Policy.from(base64ToBytes(await response.text()));
-    return policy;
-};
 
 export const getVendorIdForPolicy = (): string => {
     return getVendorId();

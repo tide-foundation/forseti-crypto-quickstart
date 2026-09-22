@@ -679,6 +679,9 @@ export default function HomePage() {
                     }
                 });
                 setPendingPolicies(policiesWithDetails);
+            } else {
+                const err = await response.json().catch(() => ({}));
+                showMessage(`Error loading policies: ${err.error ?? response.status}`, "error");
             }
         } catch (error: any) {
             console.error("Error fetching pending policies:", error);

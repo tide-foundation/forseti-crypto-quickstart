@@ -29,6 +29,7 @@ check_cmd() {
 }
 
 check_cmd docker "https://docs.docker.com/get-docker/"
+check_cmd bash   "sudo apt install bash"
 check_cmd curl   "sudo apt install curl"
 check_cmd jq     "sudo apt install jq"
 
@@ -77,4 +78,4 @@ ok "TideCloak is ready."
 
 mkdir -p "${PROJECT_ROOT}/data"
 cd "$SCRIPT_DIR"
-sh ./tcinit.sh
+bash ./tcinit.sh
