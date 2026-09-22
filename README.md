@@ -114,6 +114,10 @@ The app will be available at [http://localhost:3000](http://localhost:3000).
 5. **Tag & encrypt** data - attach tags (including time locks) to your encrypted payload
 6. **Decrypt** data - the Forseti contract checks roles, tags, and time locks before allowing decryption
 
+On Chrome 142 and later, the enclave iframe's first call to a TideCloak on localhost triggers an "allow access to local network" prompt. Accept it. If the first Create then times out with `TIDE-TIDEJS-NET-TIMEOUT`, click Create again; the second attempt goes through.
+
+If port 8080 is already taken, run the container on another port and set `TIDECLOAK_LOCAL_URL` (and the container's `KC_HOSTNAME`) to match.
+
 ## The Default Contract
 
 The included contract (`lib/forsetiContract.ts`) supports:
