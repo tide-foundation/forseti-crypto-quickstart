@@ -1,8 +1,4 @@
 import { getAuthServerUrl, getRealm, getResource, getVendorId } from "./tidecloakConfig";
-import { Models } from "@tideorg/js";
-const Policy = Models.Policy;
-type Policy = InstanceType<typeof Policy>;
-import { base64ToBytes } from "./tideSerialization";
 
 const getTcUrl = () => `${getAuthServerUrl()}/admin/realms/${getRealm()}`;
 
@@ -11,26 +7,6 @@ export interface ChangeSetRequest {
     changeSetType: string;
     actionType: string;
 }
-
-// Reads the signed admin policy snapshot written by init/tcinit.sh.
-// Server-side only: this module is also bundled for the browser, so fs is
-// required lazily here rather than imported at the top.
-export const getAdminPolicy = async (): Promise<Policy> => {
-    if (typeof window !== "undefined") {
-        throw new Error("getAdminPolicy is server-side only");
-    }
-    const fs = require("fs");
-    const path = require("path");
-    const filePath = path.join(process.cwd(), "data", "admin-policy.b64");
-    let b64: string;
-    try {
-        b64 = fs.readFileSync(filePath, "utf-8").trim();
-    } catch {
-        console.error(`Admin policy snapshot not found at ${filePath}`);
-        throw new Error(`Admin policy snapshot not found (data/admin-policy.b64). Run "npm run init", or "EXPORT_ONLY=1 bash init/tcinit.sh" to refresh it.`);
-    }
-    return Policy.from(base64ToBytes(b64));
-};
 
 export const getVendorIdForPolicy = (): string => {
     return getVendorId();
